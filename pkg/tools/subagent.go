@@ -3,12 +3,40 @@ package tools
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
+
+// subagentLogPath returns the path to the subagent progress log file.
+func subagentLogPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = os.Getenv("HOME")
+	}
+	return filepath.Join(home, ".picoclaw", "workspace", "logs", "subagents.log")
+}
+
+// appendSubagentLog writes a timestamped line to the subagent progress log.
+func appendSubagentLog(taskID, label, event, detail string) {
+	path := subagentLogPath()
+	_ = os.MkdirAll(filepath.Dir(path), 0o755)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	ts := time.Now().Format("2006-01-02 15:04:05")
+	name := label
+	if name == "" {
+		name = taskID
+	}
+	fmt.Fprintf(f, "[%s] [%s] %s: %s\n", ts, name, event, detail)
+}
 
 type SubagentTask struct {
 	ID            string
@@ -141,6 +169,7 @@ func (sm *SubagentManager) runTask(ctx context.Context, task *SubagentTask, call
 	defer sm.wg.Done()
 	task.Status = "running"
 	task.Created = time.Now().UnixMilli()
+	appendSubagentLog(task.ID, task.Label, "START", task.Task)
 
 	// Build system prompt for subagent
 	systemPrompt := `You are a subagent. Complete the given task independently and report the result.
@@ -204,11 +233,14 @@ After completing the task, provide a clear summary of what was done.`
 	}
 
 	loopResult, err := RunToolLoop(ctx, ToolLoopConfig{
-		Provider:      provider,
-		Model:         model,
-		Tools:         tools,
-		MaxIterations: maxIter,
-		LLMOptions:    llmOptions,
+		Provider:       provider,
+		Model:          model,
+		Tools:          tools,
+		MaxIterations:  maxIter,
+		LLMOptions:     llmOptions,
+		ProgressLogger: appendSubagentLog,
+		TaskID:         task.ID,
+		TaskLabel:      task.Label,
 	}, messages, task.OriginChannel, task.OriginChatID)
 
 	sm.mu.Lock()
@@ -229,6 +261,7 @@ After completing the task, provide a clear summary of what was done.`
 			task.Status = "cancelled"
 			task.Result = "Task cancelled during execution"
 		}
+		appendSubagentLog(task.ID, task.Label, task.Status, task.Result)
 		result = &ToolResult{
 			ForLLM:  task.Result,
 			ForUser: "",
@@ -240,6 +273,8 @@ After completing the task, provide a clear summary of what was done.`
 	} else {
 		task.Status = "completed"
 		task.Result = loopResult.Content
+		appendSubagentLog(task.ID, task.Label, "COMPLETED",
+			fmt.Sprintf("iterations=%d result_len=%d", loopResult.Iterations, len(loopResult.Content)))
 		result = &ToolResult{
 			ForLLM: fmt.Sprintf(
 				"Subagent '%s' completed (iterations: %d): %s",

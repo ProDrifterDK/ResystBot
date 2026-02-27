@@ -18,13 +18,21 @@ import (
 	"github.com/sipeed/picoclaw/pkg/utils"
 )
 
+// ProgressLogger is an optional callback invoked at each significant event in the tool loop.
+// taskID identifies the subagent task, label is its human-readable name,
+// event is one of: TOOL_CALL, TOOL_RESULT, ERROR, and detail is the relevant content.
+type ProgressLogger func(taskID, label, event, detail string)
+
 // ToolLoopConfig configures the tool execution loop.
 type ToolLoopConfig struct {
-	Provider      providers.LLMProvider
-	Model         string
-	Tools         *ToolRegistry
-	MaxIterations int
-	LLMOptions    map[string]any
+	Provider       providers.LLMProvider
+	Model          string
+	Tools          *ToolRegistry
+	MaxIterations  int
+	LLMOptions     map[string]any
+	ProgressLogger ProgressLogger // optional; called on each tool call/result/error
+	TaskID         string         // optional; passed to ProgressLogger
+	TaskLabel      string         // optional; passed to ProgressLogger
 }
 
 // ToolLoopResult contains the result of running the tool loop.
@@ -180,6 +188,11 @@ func RunToolLoop(
 					"iteration": iteration,
 				})
 
+			if config.ProgressLogger != nil {
+				config.ProgressLogger(config.TaskID, config.TaskLabel, "TOOL_CALL",
+					fmt.Sprintf("[iter %d] %s(%s)", iteration, tc.Name, argsPreview))
+			}
+
 			// Execute tool (no async callback for subagents - they run independently)
 			var toolResult *ToolResult
 			if config.Tools != nil {
@@ -192,6 +205,16 @@ func RunToolLoop(
 			contentForLLM := toolResult.ForLLM
 			if contentForLLM == "" && toolResult.Err != nil {
 				contentForLLM = toolResult.Err.Error()
+			}
+
+			if config.ProgressLogger != nil {
+				resultPreview := utils.Truncate(contentForLLM, 300)
+				event := "TOOL_RESULT"
+				if toolResult.IsError {
+					event = "TOOL_ERROR"
+				}
+				config.ProgressLogger(config.TaskID, config.TaskLabel, event,
+					fmt.Sprintf("[iter %d] %s → %s", iteration, tc.Name, resultPreview))
 			}
 
 			// Add tool result message
