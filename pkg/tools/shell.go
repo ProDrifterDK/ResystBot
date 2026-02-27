@@ -22,6 +22,7 @@ type ExecTool struct {
 	denyPatterns        []*regexp.Regexp
 	allowPatterns       []*regexp.Regexp
 	restrictToWorkspace bool
+	sudoPassword        string
 }
 
 var defaultDenyPatterns = []*regexp.Regexp{
@@ -108,12 +109,18 @@ func NewExecToolWithConfig(workingDir string, restrict bool, config *config.Conf
 		}
 	}
 
+	sudoPassword := ""
+	if config != nil {
+		sudoPassword = config.Tools.Exec.SudoPassword
+	}
+
 	return &ExecTool{
 		workingDir:          workingDir,
 		timeout:             timeout,
 		denyPatterns:        denyPatterns,
 		allowPatterns:       nil,
 		restrictToWorkspace: restrict,
+		sudoPassword:        sudoPassword,
 	}
 }
 
@@ -182,6 +189,12 @@ func (t *ExecTool) Execute(ctx context.Context, args map[string]any) *ToolResult
 	}
 	defer cancel()
 
+	// If command contains sudo and we have a password configured, pipe it via sudo -S
+	if t.sudoPassword != "" && strings.Contains(command, "sudo ") {
+		// Replace `sudo ` with `sudo -S -p '' ` and pipe password via stdin
+		command = strings.ReplaceAll(command, "sudo ", "sudo -S -p '' ")
+	}
+
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
 		cmd = exec.CommandContext(cmdCtx, "powershell", "-NoProfile", "-NonInteractive", "-Command", command)
@@ -197,6 +210,11 @@ func (t *ExecTool) Execute(ctx context.Context, args map[string]any) *ToolResult
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+
+	// Pipe sudo password to stdin if configured
+	if t.sudoPassword != "" && strings.Contains(command, "sudo ") {
+		cmd.Stdin = strings.NewReader(t.sudoPassword + "\n")
+	}
 
 	if err := cmd.Start(); err != nil {
 		return ErrorResult(fmt.Sprintf("failed to start command: %v", err))

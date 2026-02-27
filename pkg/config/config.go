@@ -478,6 +478,7 @@ type ExecConfig struct {
 	EnableDenyPatterns bool     `json:"enable_deny_patterns" env:"PICOCLAW_TOOLS_EXEC_ENABLE_DENY_PATTERNS"`
 	CustomDenyPatterns []string `json:"custom_deny_patterns" env:"PICOCLAW_TOOLS_EXEC_CUSTOM_DENY_PATTERNS"`
 	TimeoutSeconds     int      `json:"timeout_seconds"      env:"PICOCLAW_TOOLS_EXEC_TIMEOUT_SECONDS"` // 0 means default (60s), -1 means no timeout
+	SudoPassword       string   `json:"sudo_password"        env:"PICOCLAW_TOOLS_EXEC_SUDO_PASSWORD"`   // password piped to sudo -S; leave empty to block sudo
 }
 
 type ToolsConfig struct {
