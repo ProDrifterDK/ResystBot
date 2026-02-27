@@ -10,6 +10,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/providers"
@@ -62,8 +64,33 @@ func RunToolLoop(
 		if llmOpts == nil {
 			llmOpts = map[string]any{}
 		}
-		// 3. Call LLM
-		response, err := config.Provider.Chat(ctx, messages, providerToolDefs, config.Model, llmOpts)
+		// 3. Call LLM with retry for server errors
+		var response *providers.LLMResponse
+		var err error
+		maxRetries := 2
+		for retry := 0; retry <= maxRetries; retry++ {
+			response, err = config.Provider.Chat(ctx, messages, providerToolDefs, config.Model, llmOpts)
+			if err == nil {
+				break
+			}
+
+			errMsg := strings.ToLower(err.Error())
+			isServerError := strings.Contains(errMsg, "502") ||
+				strings.Contains(errMsg, "503") ||
+				strings.Contains(errMsg, "504") ||
+				strings.Contains(errMsg, "unavailable")
+
+			if isServerError && retry < maxRetries {
+				logger.WarnCF("toolloop", "Server error detected, retrying", map[string]any{
+					"error": err.Error(),
+					"retry": retry,
+				})
+				time.Sleep(time.Duration(retry+1) * 2 * time.Second) // Exponential backoff
+				continue
+			}
+			break
+		}
+
 		if err != nil {
 			logger.ErrorCF("toolloop", "LLM call failed",
 				map[string]any{
@@ -76,6 +103,28 @@ func RunToolLoop(
 		// 4. If no tool calls, we're done
 		if len(response.ToolCalls) == 0 {
 			finalContent = response.Content
+			if finalContent == "" {
+				logger.WarnCF("toolloop", "LLM returned empty response with no tool calls, retrying",
+					map[string]any{
+						"iteration": iteration,
+					})
+
+				// Add a system message to prompt the LLM to respond, but only if we haven't already
+				if len(messages) > 0 && messages[len(messages)-1].Content != "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]" {
+					messages = append(messages, providers.Message{
+						Role:    "user",
+						Content: "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]",
+					})
+				}
+				continue
+			}
+
+			// Clean up any system notes from the final content if the LLM echoed them
+			finalContent = strings.TrimPrefix(finalContent, "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]\n\n")
+			finalContent = strings.TrimPrefix(finalContent, "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]\n")
+			finalContent = strings.TrimPrefix(finalContent, "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]")
+			finalContent = strings.TrimSpace(finalContent)
+
 			logger.InfoCF("toolloop", "LLM response without tool calls (direct answer)",
 				map[string]any{
 					"iteration":     iteration,

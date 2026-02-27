@@ -24,6 +24,7 @@ type AgentInstance struct {
 	MaxTokens      int
 	Temperature    float64
 	ContextWindow  int
+	ThinkingBudget int
 	Provider       providers.LLMProvider
 	Sessions       *session.SessionManager
 	ContextBuilder *ContextBuilder
@@ -77,15 +78,34 @@ func NewAgentInstance(
 	if maxIter == 0 {
 		maxIter = 20
 	}
+	if agentCfg != nil && agentCfg.MaxToolIterations > 0 {
+		maxIter = agentCfg.MaxToolIterations
+	}
 
 	maxTokens := defaults.MaxTokens
 	if maxTokens == 0 {
 		maxTokens = 8192
 	}
+	if agentCfg != nil && agentCfg.MaxTokens > 0 {
+		maxTokens = agentCfg.MaxTokens
+	}
 
 	temperature := 0.7
 	if defaults.Temperature != nil {
 		temperature = *defaults.Temperature
+	}
+	if agentCfg != nil && agentCfg.Temperature != nil {
+		temperature = *agentCfg.Temperature
+	}
+
+	contextWindow := maxTokens
+	if agentCfg != nil && agentCfg.ContextWindow > 0 {
+		contextWindow = agentCfg.ContextWindow
+	}
+
+	thinkingBudget := 0
+	if agentCfg != nil && agentCfg.ThinkingBudget > 0 {
+		thinkingBudget = agentCfg.ThinkingBudget
 	}
 
 	// Resolve fallback candidates
@@ -104,7 +124,8 @@ func NewAgentInstance(
 		MaxIterations:  maxIter,
 		MaxTokens:      maxTokens,
 		Temperature:    temperature,
-		ContextWindow:  maxTokens,
+		ContextWindow:  contextWindow,
+		ThinkingBudget: thinkingBudget,
 		Provider:       provider,
 		Sessions:       sessionsManager,
 		ContextBuilder: contextBuilder,

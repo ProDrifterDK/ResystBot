@@ -286,6 +286,11 @@ func DefaultConfig() *Config {
 					Enabled:    true,
 					MaxResults: 5,
 				},
+				SearXNG: SearXNGConfig{
+					Enabled:    false,
+					BaseURL:    "http://localhost:8888",
+					MaxResults: 10,
+				},
 				Perplexity: PerplexityConfig{
 					Enabled:    false,
 					APIKey:     "",

@@ -380,6 +380,70 @@ func (p *PerplexitySearchProvider) Search(ctx context.Context, query string, cou
 	return fmt.Sprintf("Results for: %s (via Perplexity)\n%s", query, searchResp.Choices[0].Message.Content), nil
 }
 
+type SearXNGSearchProvider struct {
+	baseURL string
+	proxy   string
+}
+
+type searxngResult struct {
+	Title   string `json:"title"`
+	URL     string `json:"url"`
+	Content string `json:"content"`
+}
+
+type searxngResponse struct {
+	Results []searxngResult `json:"results"`
+}
+
+func (p *SearXNGSearchProvider) Search(ctx context.Context, query string, count int) (string, error) {
+	searchURL := fmt.Sprintf("%s/search?q=%s&format=json&language=auto", strings.TrimRight(p.baseURL, "/"), url.QueryEscape(query))
+
+	req, err := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("User-Agent", userAgent)
+
+	client, err := createHTTPClient(p.proxy, 15*time.Second)
+	if err != nil {
+		return "", fmt.Errorf("failed to create HTTP client: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("searxng returned status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	var data searxngResponse
+	if err := json.Unmarshal(body, &data); err != nil {
+		return "", fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if len(data.Results) == 0 {
+		return fmt.Sprintf("No results found for: %s", query), nil
+	}
+
+	var lines []string
+	lines = append(lines, fmt.Sprintf("Results for: %s (via SearXNG)", query))
+	limit := count
+	if limit > len(data.Results) {
+		limit = len(data.Results)
+	}
+	for i, r := range data.Results[:limit] {
+		lines = append(lines, fmt.Sprintf("%d. %s\n   URL: %s\n   %s", i+1, r.Title, r.URL, r.Content))
+	}
+	return strings.Join(lines, "\n\n"), nil
+}
+
 type WebSearchTool struct {
 	provider   SearchProvider
 	maxResults int
@@ -398,6 +462,9 @@ type WebSearchToolOptions struct {
 	PerplexityAPIKey     string
 	PerplexityMaxResults int
 	PerplexityEnabled    bool
+	SearXNGEnabled       bool
+	SearXNGBaseURL       string
+	SearXNGMaxResults    int
 	Proxy                string
 }
 
@@ -405,7 +472,7 @@ func NewWebSearchTool(opts WebSearchToolOptions) *WebSearchTool {
 	var provider SearchProvider
 	maxResults := 5
 
-	// Priority: Perplexity > Brave > Tavily > DuckDuckGo
+	// Priority: Perplexity > Brave > Tavily > SearXNG > DuckDuckGo
 	if opts.PerplexityEnabled && opts.PerplexityAPIKey != "" {
 		provider = &PerplexitySearchProvider{apiKey: opts.PerplexityAPIKey, proxy: opts.Proxy}
 		if opts.PerplexityMaxResults > 0 {
@@ -423,6 +490,11 @@ func NewWebSearchTool(opts WebSearchToolOptions) *WebSearchTool {
 		}
 		if opts.TavilyMaxResults > 0 {
 			maxResults = opts.TavilyMaxResults
+		}
+	} else if opts.SearXNGEnabled && opts.SearXNGBaseURL != "" {
+		provider = &SearXNGSearchProvider{baseURL: opts.SearXNGBaseURL, proxy: opts.Proxy}
+		if opts.SearXNGMaxResults > 0 {
+			maxResults = opts.SearXNGMaxResults
 		}
 	} else if opts.DuckDuckGoEnabled {
 		provider = &DuckDuckGoSearchProvider{proxy: opts.Proxy}

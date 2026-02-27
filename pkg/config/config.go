@@ -129,13 +129,18 @@ func (m AgentModelConfig) MarshalJSON() ([]byte, error) {
 }
 
 type AgentConfig struct {
-	ID        string            `json:"id"`
-	Default   bool              `json:"default,omitempty"`
-	Name      string            `json:"name,omitempty"`
-	Workspace string            `json:"workspace,omitempty"`
-	Model     *AgentModelConfig `json:"model,omitempty"`
-	Skills    []string          `json:"skills,omitempty"`
-	Subagents *SubagentsConfig  `json:"subagents,omitempty"`
+	ID                string            `json:"id"`
+	Default           bool              `json:"default,omitempty"`
+	Name              string            `json:"name,omitempty"`
+	Workspace         string            `json:"workspace,omitempty"`
+	Model             *AgentModelConfig `json:"model,omitempty"`
+	Skills            []string          `json:"skills,omitempty"`
+	Subagents         *SubagentsConfig  `json:"subagents,omitempty"`
+	MaxTokens         int               `json:"max_tokens,omitempty"`
+	Temperature       *float64          `json:"temperature,omitempty"`
+	MaxToolIterations int               `json:"max_tool_iterations,omitempty"`
+	ThinkingBudget    int               `json:"thinking_budget,omitempty"`
+	ContextWindow     int               `json:"context_window,omitempty"`
 }
 
 type SubagentsConfig struct {
@@ -442,6 +447,12 @@ type DuckDuckGoConfig struct {
 	MaxResults int  `json:"max_results" env:"PICOCLAW_TOOLS_WEB_DUCKDUCKGO_MAX_RESULTS"`
 }
 
+type SearXNGConfig struct {
+	Enabled    bool   `json:"enabled"     env:"PICOCLAW_TOOLS_WEB_SEARXNG_ENABLED"`
+	BaseURL    string `json:"base_url"    env:"PICOCLAW_TOOLS_WEB_SEARXNG_BASE_URL"`
+	MaxResults int    `json:"max_results" env:"PICOCLAW_TOOLS_WEB_SEARXNG_MAX_RESULTS"`
+}
+
 type PerplexityConfig struct {
 	Enabled    bool   `json:"enabled"     env:"PICOCLAW_TOOLS_WEB_PERPLEXITY_ENABLED"`
 	APIKey     string `json:"api_key"     env:"PICOCLAW_TOOLS_WEB_PERPLEXITY_API_KEY"`
@@ -453,6 +464,7 @@ type WebToolsConfig struct {
 	Tavily     TavilyConfig     `json:"tavily"`
 	DuckDuckGo DuckDuckGoConfig `json:"duckduckgo"`
 	Perplexity PerplexityConfig `json:"perplexity"`
+	SearXNG    SearXNGConfig    `json:"searxng"`
 	// Proxy is an optional proxy URL for web tools (http/https/socks5/socks5h).
 	// For authenticated proxies, prefer HTTP_PROXY/HTTPS_PROXY env vars instead of embedding credentials in config.
 	Proxy string `json:"proxy,omitempty" env:"PICOCLAW_TOOLS_WEB_PROXY"`
@@ -465,6 +477,7 @@ type CronToolsConfig struct {
 type ExecConfig struct {
 	EnableDenyPatterns bool     `json:"enable_deny_patterns" env:"PICOCLAW_TOOLS_EXEC_ENABLE_DENY_PATTERNS"`
 	CustomDenyPatterns []string `json:"custom_deny_patterns" env:"PICOCLAW_TOOLS_EXEC_CUSTOM_DENY_PATTERNS"`
+	TimeoutSeconds     int      `json:"timeout_seconds"      env:"PICOCLAW_TOOLS_EXEC_TIMEOUT_SECONDS"` // 0 means default (60s), -1 means no timeout
 }
 
 type ToolsConfig struct {

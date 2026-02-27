@@ -165,6 +165,15 @@ func buildParams(
 		params.Temperature = anthropic.Float(temp)
 	}
 
+	if budget, ok := options["thinking_budget"].(int); ok && budget > 0 {
+		params.Thinking = anthropic.ThinkingConfigParamUnion{
+			OfEnabled: &anthropic.ThinkingConfigEnabledParam{
+				BudgetTokens: int64(budget),
+				Type:         "enabled",
+			},
+		}
+	}
+
 	if len(tools) > 0 {
 		params.Tools = translateTools(tools)
 	}

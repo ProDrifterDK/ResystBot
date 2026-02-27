@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/chzyer/readline"
 
@@ -24,6 +25,8 @@ func agentCmd() {
 	message := ""
 	sessionKey := "cli:default"
 	modelOverride := ""
+	channel := "cli"
+	chatID := "direct"
 
 	args := os.Args[2:]
 	for i := 0; i < len(args); i++ {
@@ -44,6 +47,16 @@ func agentCmd() {
 		case "--model", "-model":
 			if i+1 < len(args) {
 				modelOverride = args[i+1]
+				i++
+			}
+		case "--channel":
+			if i+1 < len(args) {
+				channel = args[i+1]
+				i++
+			}
+		case "--chat-id":
+			if i+1 < len(args) {
+				chatID = args[i+1]
 				i++
 			}
 		}
@@ -72,6 +85,19 @@ func agentCmd() {
 	msgBus := bus.NewMessageBus()
 	agentLoop := agent.NewAgentLoop(cfg, msgBus, provider)
 
+	// Start a goroutine to listen for outbound messages (e.g. from the message tool)
+	go func() {
+		ctx := context.Background()
+		for {
+			msg, ok := msgBus.SubscribeOutbound(ctx)
+			if !ok {
+				break
+			}
+			// Print the outbound message to stdout so tg_listener.py can capture it
+			fmt.Printf("\n%s %s\n\n", logo, msg.Content)
+		}
+	}()
+
 	// Print agent startup info (only for interactive mode)
 	startupInfo := agentLoop.GetStartupInfo()
 	logger.InfoCF("agent", "Agent initialized",
@@ -83,19 +109,30 @@ func agentCmd() {
 
 	if message != "" {
 		ctx := context.Background()
-		response, err := agentLoop.ProcessDirect(ctx, message, sessionKey)
+		response, err := agentLoop.ProcessDirectWithChannel(ctx, message, sessionKey, channel, chatID)
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("\n%s %s\n", logo, response)
+		if !agentLoop.HasSentMessageInRound() && response != "" {
+			fmt.Printf("\n%s %s\n", logo, response)
+		}
+
+		// Wait for any spawned subagent goroutines to finish, then drain
+		// the inbound bus so subagent result messages are processed and
+		// any outbound replies are printed before the process exits.
+		agentLoop.WaitForSubagents()
+		agentLoop.DrainInbound(ctx, channel, chatID)
+		// Give the outbound-listener goroutine time to print any messages
+		// that DrainInbound triggered via bus.PublishOutbound.
+		time.Sleep(200 * time.Millisecond)
 	} else {
 		fmt.Printf("%s Interactive mode (Ctrl+C to exit)\n\n", logo)
-		interactiveMode(agentLoop, sessionKey)
+		interactiveMode(agentLoop, sessionKey, channel, chatID)
 	}
 }
 
-func interactiveMode(agentLoop *agent.AgentLoop, sessionKey string) {
+func interactiveMode(agentLoop *agent.AgentLoop, sessionKey, channel, chatID string) {
 	prompt := fmt.Sprintf("%s You: ", logo)
 
 	rl, err := readline.NewEx(&readline.Config{
@@ -108,7 +145,7 @@ func interactiveMode(agentLoop *agent.AgentLoop, sessionKey string) {
 	if err != nil {
 		fmt.Printf("Error initializing readline: %v\n", err)
 		fmt.Println("Falling back to simple input mode...")
-		simpleInteractiveMode(agentLoop, sessionKey)
+		simpleInteractiveMode(agentLoop, sessionKey, channel, chatID)
 		return
 	}
 	defer rl.Close()
@@ -135,17 +172,25 @@ func interactiveMode(agentLoop *agent.AgentLoop, sessionKey string) {
 		}
 
 		ctx := context.Background()
-		response, err := agentLoop.ProcessDirect(ctx, input, sessionKey)
+		response, err := agentLoop.ProcessDirectWithChannel(ctx, input, sessionKey, channel, chatID)
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
 			continue
 		}
 
-		fmt.Printf("\n%s %s\n\n", logo, response)
+		if !agentLoop.HasSentMessageInRound() && response != "" {
+			fmt.Printf("\n%s %s\n\n", logo, response)
+		}
+
+		// Drain subagent results in background so the prompt stays responsive.
+		go func(ch, cid string) {
+			agentLoop.WaitForSubagents()
+			agentLoop.DrainInbound(context.Background(), ch, cid)
+		}(channel, chatID)
 	}
 }
 
-func simpleInteractiveMode(agentLoop *agent.AgentLoop, sessionKey string) {
+func simpleInteractiveMode(agentLoop *agent.AgentLoop, sessionKey, channel, chatID string) {
 	reader := bufio.NewReader(os.Stdin)
 	for {
 		fmt.Printf("%s You: ", logo)
@@ -170,12 +215,20 @@ func simpleInteractiveMode(agentLoop *agent.AgentLoop, sessionKey string) {
 		}
 
 		ctx := context.Background()
-		response, err := agentLoop.ProcessDirect(ctx, input, sessionKey)
+		response, err := agentLoop.ProcessDirectWithChannel(ctx, input, sessionKey, channel, chatID)
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
 			continue
 		}
 
-		fmt.Printf("\n%s %s\n\n", logo, response)
+		if !agentLoop.HasSentMessageInRound() && response != "" {
+			fmt.Printf("\n%s %s\n\n", logo, response)
+		}
+
+		// Drain subagent results in background so the prompt stays responsive.
+		go func(ch, cid string) {
+			agentLoop.WaitForSubagents()
+			agentLoop.DrainInbound(context.Background(), ch, cid)
+		}(channel, chatID)
 	}
 }

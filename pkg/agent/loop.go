@@ -30,14 +30,15 @@ import (
 )
 
 type AgentLoop struct {
-	bus            *bus.MessageBus
-	cfg            *config.Config
-	registry       *AgentRegistry
-	state          *state.Manager
-	running        atomic.Bool
-	summarizing    sync.Map
-	fallback       *providers.FallbackChain
-	channelManager *channels.Manager
+	bus              *bus.MessageBus
+	cfg              *config.Config
+	registry         *AgentRegistry
+	state            *state.Manager
+	running          atomic.Bool
+	summarizing      sync.Map
+	fallback         *providers.FallbackChain
+	channelManager   *channels.Manager
+	subagentManagers map[string]*tools.SubagentManager
 }
 
 // processOptions configures how a message is processed
@@ -56,7 +57,7 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 	registry := NewAgentRegistry(cfg, provider)
 
 	// Register shared tools to all agents
-	registerSharedTools(cfg, msgBus, registry, provider)
+	subagentManagers := registerSharedTools(cfg, msgBus, registry, provider)
 
 	// Set up shared fallback chain
 	cooldown := providers.NewCooldownTracker()
@@ -70,22 +71,28 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 	}
 
 	return &AgentLoop{
-		bus:         msgBus,
-		cfg:         cfg,
-		registry:    registry,
-		state:       stateManager,
-		summarizing: sync.Map{},
-		fallback:    fallbackChain,
+		bus:              msgBus,
+		cfg:              cfg,
+		registry:         registry,
+		state:            stateManager,
+		summarizing:      sync.Map{},
+		fallback:         fallbackChain,
+		subagentManagers: subagentManagers,
 	}
 }
 
 // registerSharedTools registers tools that are shared across all agents (web, message, spawn).
+// It returns the map of SubagentManagers keyed by agent ID so callers can wait on them.
 func registerSharedTools(
 	cfg *config.Config,
 	msgBus *bus.MessageBus,
 	registry *AgentRegistry,
 	provider providers.LLMProvider,
-) {
+) map[string]*tools.SubagentManager {
+	// subagentManagers holds the manager for each agent so we can cross-register profiles below.
+	subagentManagers := make(map[string]*tools.SubagentManager)
+
+	// First pass: register all tools and create subagent managers.
 	for _, agentID := range registry.ListAgentIDs() {
 		agent, ok := registry.GetAgent(agentID)
 		if !ok {
@@ -106,6 +113,9 @@ func registerSharedTools(
 			PerplexityAPIKey:     cfg.Tools.Web.Perplexity.APIKey,
 			PerplexityMaxResults: cfg.Tools.Web.Perplexity.MaxResults,
 			PerplexityEnabled:    cfg.Tools.Web.Perplexity.Enabled,
+			SearXNGEnabled:       cfg.Tools.Web.SearXNG.Enabled,
+			SearXNGBaseURL:       cfg.Tools.Web.SearXNG.BaseURL,
+			SearXNGMaxResults:    cfg.Tools.Web.SearXNG.MaxResults,
 			Proxy:                cfg.Tools.Web.Proxy,
 		}); searchTool != nil {
 			agent.Tools.Register(searchTool)
@@ -143,6 +153,11 @@ func registerSharedTools(
 		// Spawn tool with allowlist checker
 		subagentManager := tools.NewSubagentManager(provider, agent.Model, agent.Workspace, msgBus)
 		subagentManager.SetLLMOptions(agent.MaxTokens, agent.Temperature)
+		subagentManager.SetMaxIterations(agent.MaxIterations)
+		// Set the spawning agent's own tools as default so unnamed subagents have full tool access
+		subagentManager.SetTools(agent.Tools)
+		subagentManagers[agentID] = subagentManager
+
 		spawnTool := tools.NewSpawnTool(subagentManager)
 		currentAgentID := agentID
 		spawnTool.SetAllowlistChecker(func(targetAgentID string) bool {
@@ -152,6 +167,77 @@ func registerSharedTools(
 
 		// Update context builder with the complete tools registry
 		agent.ContextBuilder.SetToolsRegistry(agent.Tools)
+	}
+
+	// Second pass: cross-register every agent profile into every manager so that
+	// spawn tool can target a specific agent by ID with the correct model + tools.
+	for _, managerAgentID := range registry.ListAgentIDs() {
+		manager, ok := subagentManagers[managerAgentID]
+		if !ok {
+			continue
+		}
+		for _, targetAgentID := range registry.ListAgentIDs() {
+			if targetAgentID == managerAgentID {
+				continue
+			}
+			targetAgent, ok := registry.GetAgent(targetAgentID)
+			if !ok {
+				continue
+			}
+			manager.RegisterAgentProfile(targetAgentID, targetAgent.Provider, targetAgent.Model, targetAgent.Tools)
+		}
+	}
+
+	return subagentManagers
+}
+
+// WaitForSubagents blocks until all spawned subagent goroutines across all agents finish.
+func (al *AgentLoop) WaitForSubagents() {
+	for _, mgr := range al.subagentManagers {
+		mgr.Wait()
+	}
+}
+
+// DrainInbound processes all inbound bus messages that are pending right now.
+// It returns after the bus is empty or the context is cancelled.
+// This is used in CLI -m mode after WaitForSubagents to handle subagent result messages.
+func (al *AgentLoop) DrainInbound(ctx context.Context, channel, chatID string) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		drainCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+		msg, ok := al.bus.ConsumeInbound(drainCtx)
+		cancel()
+		if !ok {
+			return
+		}
+		response, err := al.processMessage(ctx, msg)
+		if err != nil {
+			logger.WarnCF("agent", "Error processing drained inbound message",
+				map[string]any{"error": err.Error()})
+			continue
+		}
+		if response != "" {
+			defaultAgent := al.registry.GetDefaultAgent()
+			alreadySent := false
+			if defaultAgent != nil {
+				if tool, ok2 := defaultAgent.Tools.Get("message"); ok2 {
+					if mt, ok2 := tool.(*tools.MessageTool); ok2 {
+						alreadySent = mt.HasSentInRound()
+					}
+				}
+			}
+			if !alreadySent {
+				al.bus.PublishOutbound(bus.OutboundMessage{
+					Channel: channel,
+					ChatID:  chatID,
+					Content: response,
+				})
+			}
+		}
 	}
 }
 
@@ -363,22 +449,24 @@ func (al *AgentLoop) processSystemMessage(ctx context.Context, msg bus.InboundMe
 		content = content[idx+8:] // Extract just the result part
 	}
 
-	// Skip internal channels - only log, don't send to user
-	if constants.IsInternalChannel(originChannel) {
-		logger.InfoCF("agent", "Subagent completed (internal channel)",
-			map[string]any{
-				"sender_id":   msg.SenderID,
-				"content_len": len(content),
-				"channel":     originChannel,
-			})
-		return "", nil
-	}
-
 	// Use default agent for system messages
 	agent := al.registry.GetDefaultAgent()
 
 	// Use the origin session for context
 	sessionKey := routing.BuildAgentMainSessionKey(agent.ID)
+
+	// For internal channels (cli, subagent, etc.) still inform the main agent about
+	// the result/failure so it can react, but don't forward the response to the user.
+	sendResponse := !constants.IsInternalChannel(originChannel)
+
+	if !sendResponse {
+		logger.InfoCF("agent", "Subagent completed (internal channel), informing main agent",
+			map[string]any{
+				"sender_id":   msg.SenderID,
+				"content_len": len(content),
+				"channel":     originChannel,
+			})
+	}
 
 	return al.runAgentLoop(ctx, agent, processOptions{
 		SessionKey:      sessionKey,
@@ -387,7 +475,7 @@ func (al *AgentLoop) processSystemMessage(ctx context.Context, msg bus.InboundMe
 		UserMessage:     fmt.Sprintf("[System: %s] %s", msg.SenderID, msg.Content),
 		DefaultResponse: "Background task completed.",
 		EnableSummary:   false,
-		SendResponse:    true,
+		SendResponse:    sendResponse,
 	})
 }
 
@@ -449,8 +537,8 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, agent *AgentInstance, opt
 		al.maybeSummarize(agent, opts.SessionKey, opts.Channel, opts.ChatID)
 	}
 
-	// 8. Optional: send response via bus
-	if opts.SendResponse {
+	// 8. Optional: send response via bus — skip if message tool already sent one this round
+	if opts.SendResponse && !al.HasSentMessageInRound() {
 		al.bus.PublishOutbound(bus.OutboundMessage{
 			Channel: opts.Channel,
 			ChatID:  opts.ChatID,
@@ -520,13 +608,20 @@ func (al *AgentLoop) runLLMIteration(
 		var err error
 
 		callLLM := func() (*providers.LLMResponse, error) {
+			llmOpts := map[string]any{
+				"max_tokens":  agent.MaxTokens,
+				"temperature": agent.Temperature,
+			}
+			if agent.ThinkingBudget > 0 {
+				llmOpts["thinking_budget"] = agent.ThinkingBudget
+			}
+			if agent.ContextWindow > 0 && agent.ContextWindow != agent.MaxTokens {
+				llmOpts["context_window"] = agent.ContextWindow
+			}
 			if len(agent.Candidates) > 1 && al.fallback != nil {
 				fbResult, fbErr := al.fallback.Execute(ctx, agent.Candidates,
 					func(ctx context.Context, provider, model string) (*providers.LLMResponse, error) {
-						return agent.Provider.Chat(ctx, messages, providerToolDefs, model, map[string]any{
-							"max_tokens":  agent.MaxTokens,
-							"temperature": agent.Temperature,
-						})
+						return agent.Provider.Chat(ctx, messages, providerToolDefs, model, llmOpts)
 					},
 				)
 				if fbErr != nil {
@@ -539,14 +634,14 @@ func (al *AgentLoop) runLLMIteration(
 				}
 				return fbResult.Response, nil
 			}
-			return agent.Provider.Chat(ctx, messages, providerToolDefs, agent.Model, map[string]any{
-				"max_tokens":  agent.MaxTokens,
-				"temperature": agent.Temperature,
-			})
+			return agent.Provider.Chat(ctx, messages, providerToolDefs, agent.Model, llmOpts)
 		}
 
+		// Sanitize messages before every LLM call to guard against orphaned tool call/result pairs
+		messages = sanitizeMessageHistory(messages)
+
 		// Retry loop for context/token errors
-		maxRetries := 2
+		maxRetries := 3
 		for retry := 0; retry <= maxRetries; retry++ {
 			response, err = callLLM()
 			if err == nil {
@@ -559,7 +654,31 @@ func (al *AgentLoop) runLLMIteration(
 				strings.Contains(errMsg, "invalidparameter") ||
 				strings.Contains(errMsg, "length")
 
-			if isContextError && retry < maxRetries {
+			isToolCallIDError := strings.Contains(errMsg, "tool_call_id") ||
+				strings.Contains(errMsg, "tool_calls") ||
+				(strings.Contains(errMsg, "400") && strings.Contains(errMsg, "tool"))
+
+			isServerError := strings.Contains(errMsg, "502") ||
+				strings.Contains(errMsg, "503") ||
+				strings.Contains(errMsg, "504") ||
+				strings.Contains(errMsg, "unavailable")
+
+			if isToolCallIDError && retry < maxRetries {
+				logger.WarnCF("agent", "Tool call/result pairing error detected, sanitizing and retrying", map[string]any{
+					"error": err.Error(),
+					"retry": retry,
+				})
+				messages = sanitizeMessageHistory(messages)
+				al.forceCompression(agent, opts.SessionKey)
+				newHistory := agent.Sessions.GetHistory(opts.SessionKey)
+				newSummary := agent.Sessions.GetSummary(opts.SessionKey)
+				messages = agent.ContextBuilder.BuildMessages(
+					newHistory, newSummary, "",
+					nil, opts.Channel, opts.ChatID,
+				)
+				messages = sanitizeMessageHistory(messages)
+				continue
+			} else if isContextError && retry < maxRetries {
 				logger.WarnCF("agent", "Context window error detected, attempting compression", map[string]any{
 					"error": err.Error(),
 					"retry": retry,
@@ -580,6 +699,14 @@ func (al *AgentLoop) runLLMIteration(
 					newHistory, newSummary, "",
 					nil, opts.Channel, opts.ChatID,
 				)
+				messages = sanitizeMessageHistory(messages)
+				continue
+			} else if isServerError && retry < maxRetries {
+				logger.WarnCF("agent", "Server error detected, retrying", map[string]any{
+					"error": err.Error(),
+					"retry": retry,
+				})
+				time.Sleep(time.Duration(retry+1) * 2 * time.Second) // Exponential backoff
 				continue
 			}
 			break
@@ -598,6 +725,29 @@ func (al *AgentLoop) runLLMIteration(
 		// Check if no tool calls - we're done
 		if len(response.ToolCalls) == 0 {
 			finalContent = response.Content
+			if finalContent == "" {
+				logger.WarnCF("agent", "LLM returned empty response with no tool calls, retrying",
+					map[string]any{
+						"agent_id":  agent.ID,
+						"iteration": iteration,
+					})
+
+				// Add a system message to prompt the LLM to respond, but only if we haven't already
+				if len(messages) > 0 && messages[len(messages)-1].Content != "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]" {
+					messages = append(messages, providers.Message{
+						Role:    "user",
+						Content: "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]",
+					})
+				}
+				continue
+			}
+
+			// Clean up any system notes from the final content if the LLM echoed them
+			finalContent = strings.TrimPrefix(finalContent, "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]\n\n")
+			finalContent = strings.TrimPrefix(finalContent, "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]\n")
+			finalContent = strings.TrimPrefix(finalContent, "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]")
+			finalContent = strings.TrimSpace(finalContent)
+
 			logger.InfoCF("agent", "LLM response without tool calls (direct answer)",
 				map[string]any{
 					"agent_id":      agent.ID,
@@ -773,8 +923,85 @@ func (al *AgentLoop) maybeSummarize(agent *AgentInstance, sessionKey, channel, c
 	}
 }
 
+// sanitizeMessageHistory removes orphaned tool call/result pairs from a message sequence.
+// An orphaned tool result is a "tool" role message whose tool_call_id has no preceding
+// matching "assistant" message with that tool_call_id in its ToolCalls list.
+// An orphaned tool call is an "assistant" message with ToolCalls where not all call IDs
+// have subsequent "tool" result messages responding to them.
+// This prevents Anthropic API 400 errors caused by history compression splitting pairs.
+func sanitizeMessageHistory(messages []providers.Message) []providers.Message {
+	if len(messages) == 0 {
+		return messages
+	}
+
+	// First pass: collect which tool_call_ids have both an assistant call and a tool result
+	calledIDs := make(map[string]bool)
+	respondedIDs := make(map[string]bool)
+
+	for _, msg := range messages {
+		if msg.Role == "assistant" {
+			for _, tc := range msg.ToolCalls {
+				if tc.ID != "" {
+					calledIDs[tc.ID] = true
+				}
+			}
+		}
+		if msg.Role == "tool" && msg.ToolCallID != "" {
+			respondedIDs[msg.ToolCallID] = true
+		}
+	}
+
+	// Build set of fully-paired IDs: must have both a call and a response
+	pairedIDs := make(map[string]bool)
+	for id := range calledIDs {
+		if respondedIDs[id] {
+			pairedIDs[id] = true
+		}
+	}
+
+	// Second pass: filter messages
+	sanitized := make([]providers.Message, 0, len(messages))
+	for _, msg := range messages {
+		switch msg.Role {
+		case "tool":
+			// Keep only tool results whose call_id is fully paired
+			if msg.ToolCallID != "" && pairedIDs[msg.ToolCallID] {
+				sanitized = append(sanitized, msg)
+			} else {
+				logger.WarnCF("agent", "Dropping orphaned tool result message",
+					map[string]any{"tool_call_id": msg.ToolCallID})
+			}
+		case "assistant":
+			if len(msg.ToolCalls) == 0 {
+				sanitized = append(sanitized, msg)
+				continue
+			}
+			// Keep only tool calls that are fully paired
+			validCalls := make([]providers.ToolCall, 0, len(msg.ToolCalls))
+			for _, tc := range msg.ToolCalls {
+				if tc.ID != "" && pairedIDs[tc.ID] {
+					validCalls = append(validCalls, tc)
+				} else {
+					logger.WarnCF("agent", "Dropping orphaned tool call from assistant message",
+						map[string]any{"tool_call_id": tc.ID, "tool_name": tc.Name})
+				}
+			}
+			// Only keep the assistant message if it has content or still has valid tool calls
+			if len(validCalls) > 0 || msg.Content != "" {
+				msg.ToolCalls = validCalls
+				sanitized = append(sanitized, msg)
+			}
+		default:
+			sanitized = append(sanitized, msg)
+		}
+	}
+
+	return sanitized
+}
+
 // forceCompression aggressively reduces context when the limit is hit.
 // It drops the oldest 50% of messages (keeping system prompt and last user message).
+// After truncation it sanitizes to ensure no orphaned tool call/result pairs remain.
 func (al *AgentLoop) forceCompression(agent *AgentInstance, sessionKey string) {
 	history := agent.Sessions.GetHistory(sessionKey)
 	if len(history) <= 4 {
@@ -789,12 +1016,22 @@ func (al *AgentLoop) forceCompression(agent *AgentInstance, sessionKey string) {
 		return
 	}
 
-	// Helper to find the mid-point of the conversation
+	// Find mid-point; advance forward until we land on a safe boundary:
+	// never start mid-way through a tool call / tool result group.
 	mid := len(conversation) / 2
+
+	// Walk forward from mid until we reach a non-tool message or the end,
+	// so we never start the kept slice with orphaned tool result messages.
+	for mid < len(conversation) && conversation[mid].Role == "tool" {
+		mid++
+	}
+	if mid >= len(conversation) {
+		mid = len(conversation) / 2
+	}
 
 	// New history structure:
 	// 1. System Prompt (with compression note appended)
-	// 2. Second half of conversation
+	// 2. Second half of conversation (sanitized)
 	// 3. Last message
 
 	droppedCount := mid
@@ -815,6 +1052,9 @@ func (al *AgentLoop) forceCompression(agent *AgentInstance, sessionKey string) {
 	newHistory = append(newHistory, keptConversation...)
 	newHistory = append(newHistory, history[len(history)-1]) // Last message
 
+	// Sanitize to remove any orphaned tool call/result pairs introduced by the cut
+	newHistory = sanitizeMessageHistory(newHistory)
+
 	// Update session
 	agent.Sessions.SetHistory(sessionKey, newHistory)
 	agent.Sessions.Save(sessionKey)
@@ -824,6 +1064,19 @@ func (al *AgentLoop) forceCompression(agent *AgentInstance, sessionKey string) {
 		"dropped_msgs": droppedCount,
 		"new_count":    len(newHistory),
 	})
+}
+
+// HasSentMessageInRound checks if the message tool sent a message during the current round.
+func (al *AgentLoop) HasSentMessageInRound() bool {
+	defaultAgent := al.registry.GetDefaultAgent()
+	if defaultAgent != nil {
+		if tool, ok := defaultAgent.Tools.Get("message"); ok {
+			if mt, ok := tool.(*tools.MessageTool); ok {
+				return mt.HasSentInRound()
+			}
+		}
+	}
+	return false
 }
 
 // GetStartupInfo returns information about loaded tools and skills for logging.
@@ -982,6 +1235,12 @@ func (al *AgentLoop) summarizeSession(agent *AgentInstance, sessionKey string) {
 	if finalSummary != "" {
 		agent.Sessions.SetSummary(sessionKey, finalSummary)
 		agent.Sessions.TruncateHistory(sessionKey, 4)
+		// Sanitize after truncation to remove orphaned tool call/result pairs
+		truncated := agent.Sessions.GetHistory(sessionKey)
+		sanitized := sanitizeMessageHistory(truncated)
+		if len(sanitized) != len(truncated) {
+			agent.Sessions.SetHistory(sessionKey, sanitized)
+		}
 		agent.Sessions.Save(sessionKey)
 	}
 }

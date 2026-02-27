@@ -22,14 +22,23 @@ type SubagentTask struct {
 	Created       int64
 }
 
+// agentEntry holds the provider, model and tool registry for a named agent.
+type agentEntry struct {
+	provider providers.LLMProvider
+	model    string
+	tools    *ToolRegistry
+}
+
 type SubagentManager struct {
 	tasks          map[string]*SubagentTask
 	mu             sync.RWMutex
+	wg             sync.WaitGroup
 	provider       providers.LLMProvider
 	defaultModel   string
 	bus            *bus.MessageBus
 	workspace      string
 	tools          *ToolRegistry
+	agents         map[string]*agentEntry
 	maxIterations  int
 	maxTokens      int
 	temperature    float64
@@ -45,6 +54,7 @@ func NewSubagentManager(
 ) *SubagentManager {
 	return &SubagentManager{
 		tasks:         make(map[string]*SubagentTask),
+		agents:        make(map[string]*agentEntry),
 		provider:      provider,
 		defaultModel:  defaultModel,
 		bus:           bus,
@@ -53,6 +63,13 @@ func NewSubagentManager(
 		maxIterations: 10,
 		nextID:        1,
 	}
+}
+
+// SetMaxIterations overrides the default tool iteration limit for spawned subagents.
+func (sm *SubagentManager) SetMaxIterations(n int) {
+	sm.mu.Lock()
+	sm.maxIterations = n
+	sm.mu.Unlock()
 }
 
 // SetLLMOptions sets max tokens and temperature for subagent LLM calls.
@@ -65,12 +82,19 @@ func (sm *SubagentManager) SetLLMOptions(maxTokens int, temperature float64) {
 	sm.hasTemperature = true
 }
 
-// SetTools sets the tool registry for subagent execution.
-// If not set, subagent will have access to the provided tools.
+// SetTools sets the default tool registry for subagent execution.
 func (sm *SubagentManager) SetTools(tools *ToolRegistry) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	sm.tools = tools
+}
+
+// RegisterAgentProfile registers a named agent's provider, model and tool registry so
+// the spawn tool can delegate to the correct agent when agent_id is provided.
+func (sm *SubagentManager) RegisterAgentProfile(agentID string, provider providers.LLMProvider, model string, tools *ToolRegistry) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.agents[agentID] = &agentEntry{provider: provider, model: model, tools: tools}
 }
 
 // RegisterTool registers a tool for subagent execution.
@@ -104,6 +128,7 @@ func (sm *SubagentManager) Spawn(
 	sm.tasks[taskID] = subagentTask
 
 	// Start task in background with context cancellation support
+	sm.wg.Add(1)
 	go sm.runTask(ctx, subagentTask, callback)
 
 	if label != "" {
@@ -113,6 +138,7 @@ func (sm *SubagentManager) Spawn(
 }
 
 func (sm *SubagentManager) runTask(ctx context.Context, task *SubagentTask, callback AsyncCallback) {
+	defer sm.wg.Done()
 	task.Status = "running"
 	task.Created = time.Now().UnixMilli()
 
@@ -143,9 +169,22 @@ After completing the task, provide a clear summary of what was done.`
 	default:
 	}
 
-	// Run tool loop with access to tools
+	// Run tool loop with access to tools; use agent-specific profile if targeting a named agent
 	sm.mu.RLock()
 	tools := sm.tools
+	model := sm.defaultModel
+	provider := sm.provider
+	if task.AgentID != "" {
+		if entry, ok := sm.agents[task.AgentID]; ok {
+			model = entry.model
+			if entry.provider != nil {
+				provider = entry.provider
+			}
+			if entry.tools != nil {
+				tools = entry.tools
+			}
+		}
+	}
 	maxIter := sm.maxIterations
 	maxTokens := sm.maxTokens
 	temperature := sm.temperature
@@ -165,8 +204,8 @@ After completing the task, provide a clear summary of what was done.`
 	}
 
 	loopResult, err := RunToolLoop(ctx, ToolLoopConfig{
-		Provider:      sm.provider,
-		Model:         sm.defaultModel,
+		Provider:      provider,
+		Model:         model,
 		Tools:         tools,
 		MaxIterations: maxIter,
 		LLMOptions:    llmOptions,
@@ -215,9 +254,14 @@ After completing the task, provide a clear summary of what was done.`
 		}
 	}
 
-	// Send announce message back to main agent
+	// Send announce message back to main agent (always, even on failure)
 	if sm.bus != nil {
-		announceContent := fmt.Sprintf("Task '%s' completed.\n\nResult:\n%s", task.Label, task.Result)
+		var announceContent string
+		if task.Status == "failed" || task.Status == "cancelled" {
+			announceContent = fmt.Sprintf("Task '%s' %s.\n\nError:\n%s", task.Label, task.Status, task.Result)
+		} else {
+			announceContent = fmt.Sprintf("Task '%s' completed.\n\nResult:\n%s", task.Label, task.Result)
+		}
 		sm.bus.PublishInbound(bus.InboundMessage{
 			Channel:  "system",
 			SenderID: fmt.Sprintf("subagent:%s", task.ID),
@@ -244,6 +288,11 @@ func (sm *SubagentManager) ListTasks() []*SubagentTask {
 		tasks = append(tasks, task)
 	}
 	return tasks
+}
+
+// Wait blocks until all spawned subagent goroutines have finished.
+func (sm *SubagentManager) Wait() {
+	sm.wg.Wait()
 }
 
 // SubagentTool executes a subagent task synchronously and returns the result.

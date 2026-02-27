@@ -83,11 +83,9 @@ func NewExecToolWithConfig(workingDir string, restrict bool, config *config.Conf
 		if enableDenyPatterns {
 			denyPatterns = append(denyPatterns, defaultDenyPatterns...)
 			if len(execConfig.CustomDenyPatterns) > 0 {
-				fmt.Printf("Using custom deny patterns: %v\n", execConfig.CustomDenyPatterns)
 				for _, pattern := range execConfig.CustomDenyPatterns {
 					re, err := regexp.Compile(pattern)
 					if err != nil {
-						fmt.Printf("Invalid custom deny pattern %q: %v\n", pattern, err)
 						continue
 					}
 					denyPatterns = append(denyPatterns, re)
@@ -95,15 +93,24 @@ func NewExecToolWithConfig(workingDir string, restrict bool, config *config.Conf
 			}
 		} else {
 			// If deny patterns are disabled, we won't add any patterns, allowing all commands.
-			fmt.Println("Warning: deny patterns are disabled. All commands will be allowed.")
+			// Removed fmt.Println to avoid polluting stdout in CLI mode
 		}
 	} else {
 		denyPatterns = append(denyPatterns, defaultDenyPatterns...)
 	}
 
+	timeout := 60 * time.Second
+	if config != nil {
+		if config.Tools.Exec.TimeoutSeconds > 0 {
+			timeout = time.Duration(config.Tools.Exec.TimeoutSeconds) * time.Second
+		} else if config.Tools.Exec.TimeoutSeconds == -1 {
+			timeout = 0 // No timeout
+		}
+	}
+
 	return &ExecTool{
 		workingDir:          workingDir,
-		timeout:             60 * time.Second,
+		timeout:             timeout,
 		denyPatterns:        denyPatterns,
 		allowPatterns:       nil,
 		restrictToWorkspace: restrict,

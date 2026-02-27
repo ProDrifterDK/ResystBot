@@ -16,6 +16,26 @@ type AgentRegistry struct {
 	mu       sync.RWMutex
 }
 
+// resolveAgentProvider returns a dedicated provider for the given agent model.
+// It looks up the model in cfg.ModelList and calls CreateProviderFromConfig.
+// Falls back to the supplied defaultProvider when no matching entry is found.
+func resolveAgentProvider(cfg *config.Config, model string, defaultProvider providers.LLMProvider) providers.LLMProvider {
+	if model == "" {
+		return defaultProvider
+	}
+	modelCfg, err := cfg.GetModelConfig(model)
+	if err != nil || modelCfg == nil {
+		return defaultProvider
+	}
+	p, _, err := providers.CreateProviderFromConfig(modelCfg)
+	if err != nil {
+		logger.WarnCF("agent", "Failed to create per-agent provider, falling back to default",
+			map[string]any{"model": model, "error": err.Error()})
+		return defaultProvider
+	}
+	return p
+}
+
 // NewAgentRegistry creates a registry from config, instantiating all agents.
 func NewAgentRegistry(
 	cfg *config.Config,
@@ -39,7 +59,9 @@ func NewAgentRegistry(
 		for i := range agentConfigs {
 			ac := &agentConfigs[i]
 			id := routing.NormalizeAgentID(ac.ID)
-			instance := NewAgentInstance(ac, &cfg.Agents.Defaults, cfg, provider)
+			agentModel := resolveAgentModel(ac, &cfg.Agents.Defaults)
+			agentProvider := resolveAgentProvider(cfg, agentModel, provider)
+			instance := NewAgentInstance(ac, &cfg.Agents.Defaults, cfg, agentProvider)
 			registry.agents[id] = instance
 			logger.InfoCF("agent", "Registered agent",
 				map[string]any{
