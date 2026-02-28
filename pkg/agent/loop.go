@@ -241,6 +241,25 @@ func (al *AgentLoop) DrainInbound(ctx context.Context, channel, chatID string) {
 		if err != nil {
 			logger.WarnCF("agent", "Error processing drained inbound message",
 				map[string]any{"error": err.Error()})
+			if isSystemMsg {
+				fallbackChannel := channel
+				fallbackChatID := chatID
+				if idx := strings.Index(msg.ChatID, ":"); idx > 0 {
+					fallbackChannel = msg.ChatID[:idx]
+					fallbackChatID = msg.ChatID[idx+1:]
+				}
+				if !constants.IsInternalChannel(fallbackChannel) {
+					content := msg.Content
+					if len(content) > 500 {
+						content = content[:500] + "..."
+					}
+					al.bus.PublishOutbound(bus.OutboundMessage{
+						Channel: fallbackChannel,
+						ChatID:  fallbackChatID,
+						Content: fmt.Sprintf("✅ Background task completed.\n\n%s", content),
+					})
+				}
+			}
 			continue
 		}
 		if isSystemMsg {
