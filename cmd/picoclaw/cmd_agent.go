@@ -99,7 +99,9 @@ func agentCmd() {
 		return false
 	}
 
-	// Start a goroutine to listen for outbound messages (e.g. from the message tool)
+	// Start a goroutine to listen for outbound messages (e.g. from the message tool).
+	// Each message is flushed immediately with os.Stdout.Sync() so tg_listener.py
+	// receives it right away even when picoclaw's stdout is piped (OS pipe buffer).
 	go func() {
 		ctx := context.Background()
 		for {
@@ -113,8 +115,10 @@ func agentCmd() {
 					map[string]any{"content": msg.Content})
 				continue
 			}
-			// Print the outbound message to stdout so tg_listener.py can capture it
+			// Print the outbound message to stdout so tg_listener.py can capture it.
+			// Flush immediately so the pipe reader sees it without waiting for more data.
 			fmt.Printf("\n%s %s\n\n", logo, msg.Content)
+			os.Stdout.Sync() //nolint:errcheck
 		}
 	}()
 
