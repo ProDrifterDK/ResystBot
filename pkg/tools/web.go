@@ -558,7 +558,7 @@ func (t *WebSearchTool) Execute(ctx context.Context, args map[string]any) *ToolR
 
 	return &ToolResult{
 		ForLLM:  result,
-		ForUser: result,
+		ForUser: "",
 	}
 }
 
@@ -697,26 +697,16 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 		text = text[:maxChars]
 	}
 
-	result := map[string]any{
-		"url":       urlStr,
-		"status":    resp.StatusCode,
-		"extractor": extractor,
-		"truncated": truncated,
-		"length":    len(text),
-		"text":      text,
-	}
-
-	resultJSON, _ := json.MarshalIndent(result, "", "  ")
-
 	return &ToolResult{
 		ForLLM: fmt.Sprintf(
-			"Fetched %d bytes from %s (extractor: %s, truncated: %v)",
+			"Fetched %d bytes from %s (extractor: %s, truncated: %v)\n\n%s",
 			len(text),
 			urlStr,
 			extractor,
 			truncated,
+			text,
 		),
-		ForUser: string(resultJSON),
+		ForUser: "",
 	}
 }
 
