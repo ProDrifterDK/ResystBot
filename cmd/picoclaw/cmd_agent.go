@@ -156,7 +156,25 @@ func agentCmd() {
 		}
 		// Final blocking wait to ensure all goroutines are done before draining.
 		agentLoop.WaitForSubagents()
-		agentLoop.DrainInbound(ctx, channel, chatID)
+
+		// Keep emitting stdout keepalives during DrainInbound so tg_listener watchdog doesn't fire
+		drainDone := make(chan struct{})
+		go func() {
+			agentLoop.DrainInbound(ctx, channel, chatID)
+			close(drainDone)
+		}()
+		keepaliveTicker := time.NewTicker(30 * time.Second)
+		defer keepaliveTicker.Stop()
+	drainLoop:
+		for {
+			select {
+			case <-drainDone:
+				break drainLoop
+			case <-keepaliveTicker.C:
+				fmt.Println("")
+				os.Stdout.Sync() //nolint:errcheck
+			}
+		}
 		// Give the outbound-listener goroutine time to print any messages
 		// that DrainInbound triggered via bus.PublishOutbound.
 		time.Sleep(200 * time.Millisecond)
