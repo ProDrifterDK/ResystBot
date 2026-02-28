@@ -485,7 +485,7 @@ func (al *AgentLoop) processSystemMessage(ctx context.Context, msg bus.InboundMe
 		ChatID:          originChatID,
 		UserMessage:     fmt.Sprintf("[System: %s] %s", msg.SenderID, msg.Content),
 		DefaultResponse: "Background task completed.",
-		EnableSummary:   false,
+		EnableSummary:   true,
 		SendResponse:    sendResponse,
 	})
 }
