@@ -154,8 +154,13 @@ func registerSharedTools(
 		subagentManager := tools.NewSubagentManager(provider, agent.Model, agent.Workspace, msgBus)
 		subagentManager.SetLLMOptions(agent.MaxTokens, agent.Temperature)
 		subagentManager.SetMaxIterations(agent.MaxIterations)
-		// Set the spawning agent's own tools as default so unnamed subagents have full tool access
-		subagentManager.SetTools(agent.Tools)
+		// Clone tools for subagents and remove message tool to prevent
+		// subagents from sending messages directly to external channels.
+		// Subagents should only communicate results via attempt_completion,
+		// which routes through processSystemMessage for proper relay.
+		subagentTools := agent.Tools.Clone()
+		subagentTools.Remove("message")
+		subagentManager.SetTools(subagentTools)
 		subagentManagers[agentID] = subagentManager
 
 		spawnTool := tools.NewSpawnTool(subagentManager)
@@ -184,7 +189,11 @@ func registerSharedTools(
 			if !ok {
 				continue
 			}
-			manager.RegisterAgentProfile(targetAgentID, targetAgent.Provider, targetAgent.Model, targetAgent.Tools, targetAgent.Candidates, targetAgent.ProvidersByName, targetAgent.MaxIterations)
+			// When registering agent profiles for subagent spawning,
+			// also strip the message tool from the target agent's tools.
+			subagentTargetTools := targetAgent.Tools.Clone()
+			subagentTargetTools.Remove("message")
+			manager.RegisterAgentProfile(targetAgentID, targetAgent.Provider, targetAgent.Model, subagentTargetTools, targetAgent.Candidates, targetAgent.ProvidersByName, targetAgent.MaxIterations)
 		}
 	}
 

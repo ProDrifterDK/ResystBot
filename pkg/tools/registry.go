@@ -202,3 +202,10 @@ func (r *ToolRegistry) Replace(tool Tool) {
 	defer r.mu.Unlock()
 	r.tools[tool.Name()] = tool
 }
+
+// Remove deletes a tool from the registry by name.
+func (r *ToolRegistry) Remove(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.tools, name)
+}
