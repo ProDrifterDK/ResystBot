@@ -57,6 +57,13 @@ func RunToolLoop(
 	for iteration < config.MaxIterations {
 		iteration++
 
+		if iteration == config.MaxIterations-1 {
+			messages = append(messages, providers.Message{
+				Role:    "user",
+				Content: "[System: You are approaching your iteration limit. You MUST provide a final text response to the user NOW summarizing what you've accomplished so far. Do NOT call any more tools.]",
+			})
+		}
+
 		logger.DebugCF("toolloop", "LLM iteration",
 			map[string]any{
 				"iteration": iteration,

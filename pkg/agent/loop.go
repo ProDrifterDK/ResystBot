@@ -583,6 +583,13 @@ func (al *AgentLoop) runLLMIteration(
 	for iteration < agent.MaxIterations {
 		iteration++
 
+		if iteration == agent.MaxIterations-1 {
+			messages = append(messages, providers.Message{
+				Role:    "user",
+				Content: "[System: You are approaching your iteration limit. You MUST provide a final text response to the user NOW summarizing what you've accomplished so far. Do NOT call any more tools.]",
+			})
+		}
+
 		logger.DebugCF("agent", "LLM iteration",
 			map[string]any{
 				"agent_id":  agent.ID,
