@@ -88,10 +88,8 @@ func agentCmd() {
 	// internalMessages are operational status messages that should not be forwarded to the user.
 	isInternalMessage := func(content string) bool {
 		internalPrefixes := []string{
-			"Memory threshold reached",
 			"Context window exceeded",
 			"Compressing history",
-			"Optimizing conversation history",
 		}
 		for _, prefix := range internalPrefixes {
 			if strings.Contains(content, prefix) {
