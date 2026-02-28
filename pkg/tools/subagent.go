@@ -52,9 +52,11 @@ type SubagentTask struct {
 
 // agentEntry holds the provider, model and tool registry for a named agent.
 type agentEntry struct {
-	provider providers.LLMProvider
-	model    string
-	tools    *ToolRegistry
+	provider        providers.LLMProvider
+	model           string
+	tools           *ToolRegistry
+	candidates      []providers.FallbackCandidate
+	providersByName map[string]providers.LLMProvider
 }
 
 type SubagentManager struct {
@@ -119,10 +121,23 @@ func (sm *SubagentManager) SetTools(tools *ToolRegistry) {
 
 // RegisterAgentProfile registers a named agent's provider, model and tool registry so
 // the spawn tool can delegate to the correct agent when agent_id is provided.
-func (sm *SubagentManager) RegisterAgentProfile(agentID string, provider providers.LLMProvider, model string, tools *ToolRegistry) {
+func (sm *SubagentManager) RegisterAgentProfile(
+	agentID string,
+	provider providers.LLMProvider,
+	model string,
+	tools *ToolRegistry,
+	candidates []providers.FallbackCandidate,
+	providersByName map[string]providers.LLMProvider,
+) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	sm.agents[agentID] = &agentEntry{provider: provider, model: model, tools: tools}
+	sm.agents[agentID] = &agentEntry{
+		provider:        provider,
+		model:           model,
+		tools:           tools,
+		candidates:      candidates,
+		providersByName: providersByName,
+	}
 }
 
 // RegisterTool registers a tool for subagent execution.
@@ -203,6 +218,8 @@ After completing the task, provide a clear summary of what was done.`
 	tools := sm.tools
 	model := sm.defaultModel
 	provider := sm.provider
+	var candidates []providers.FallbackCandidate
+	var providersByName map[string]providers.LLMProvider
 	if task.AgentID != "" {
 		if entry, ok := sm.agents[task.AgentID]; ok {
 			model = entry.model
@@ -212,6 +229,8 @@ After completing the task, provide a clear summary of what was done.`
 			if entry.tools != nil {
 				tools = entry.tools
 			}
+			candidates = entry.candidates
+			providersByName = entry.providersByName
 		}
 	}
 	maxIter := sm.maxIterations
@@ -233,14 +252,16 @@ After completing the task, provide a clear summary of what was done.`
 	}
 
 	loopResult, err := RunToolLoop(ctx, ToolLoopConfig{
-		Provider:       provider,
-		Model:          model,
-		Tools:          tools,
-		MaxIterations:  maxIter,
-		LLMOptions:     llmOptions,
-		ProgressLogger: appendSubagentLog,
-		TaskID:         task.ID,
-		TaskLabel:      task.Label,
+		Provider:           provider,
+		Model:              model,
+		Tools:              tools,
+		MaxIterations:      maxIter,
+		LLMOptions:         llmOptions,
+		ProgressLogger:     appendSubagentLog,
+		TaskID:             task.ID,
+		TaskLabel:          task.Label,
+		FallbackCandidates: candidates,
+		FallbackProviders:  providersByName,
 	}, messages, task.OriginChannel, task.OriginChatID)
 
 	sm.mu.Lock()

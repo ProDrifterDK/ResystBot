@@ -184,7 +184,7 @@ func registerSharedTools(
 			if !ok {
 				continue
 			}
-			manager.RegisterAgentProfile(targetAgentID, targetAgent.Provider, targetAgent.Model, targetAgent.Tools)
+			manager.RegisterAgentProfile(targetAgentID, targetAgent.Provider, targetAgent.Model, targetAgent.Tools, targetAgent.Candidates, targetAgent.ProvidersByName)
 		}
 	}
 
@@ -620,8 +620,12 @@ func (al *AgentLoop) runLLMIteration(
 			}
 			if len(agent.Candidates) > 1 && al.fallback != nil {
 				fbResult, fbErr := al.fallback.Execute(ctx, agent.Candidates,
-					func(ctx context.Context, provider, model string) (*providers.LLMResponse, error) {
-						return agent.Provider.Chat(ctx, messages, providerToolDefs, model, llmOpts)
+					func(ctx context.Context, providerName, model string) (*providers.LLMResponse, error) {
+						p, ok := agent.ProvidersByName[providerName]
+						if !ok {
+							p = agent.Provider
+						}
+						return p.Chat(ctx, messages, providerToolDefs, model, llmOpts)
 					},
 				)
 				if fbErr != nil {

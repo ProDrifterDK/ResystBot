@@ -25,14 +25,16 @@ type ProgressLogger func(taskID, label, event, detail string)
 
 // ToolLoopConfig configures the tool execution loop.
 type ToolLoopConfig struct {
-	Provider       providers.LLMProvider
-	Model          string
-	Tools          *ToolRegistry
-	MaxIterations  int
-	LLMOptions     map[string]any
-	ProgressLogger ProgressLogger // optional; called on each tool call/result/error
-	TaskID         string         // optional; passed to ProgressLogger
-	TaskLabel      string         // optional; passed to ProgressLogger
+	Provider           providers.LLMProvider
+	Model              string
+	Tools              *ToolRegistry
+	MaxIterations      int
+	LLMOptions         map[string]any
+	ProgressLogger     ProgressLogger                   // optional; called on each tool call/result/error
+	TaskID             string                           // optional; passed to ProgressLogger
+	TaskLabel          string                           // optional; passed to ProgressLogger
+	FallbackCandidates []providers.FallbackCandidate    // optional; fallback chain after primary fails
+	FallbackProviders  map[string]providers.LLMProvider // provider-name → provider for fallback routing
 }
 
 // ToolLoopResult contains the result of running the tool loop.
@@ -72,7 +74,7 @@ func RunToolLoop(
 		if llmOpts == nil {
 			llmOpts = map[string]any{}
 		}
-		// 3. Call LLM with retry for server errors
+		// 3. Call LLM with retry + fallback for server errors
 		var response *providers.LLMResponse
 		var err error
 		maxRetries := 2
@@ -83,10 +85,12 @@ func RunToolLoop(
 			}
 
 			errMsg := strings.ToLower(err.Error())
-			isServerError := strings.Contains(errMsg, "502") ||
+			isServerError := strings.Contains(errMsg, "500") ||
+				strings.Contains(errMsg, "502") ||
 				strings.Contains(errMsg, "503") ||
 				strings.Contains(errMsg, "504") ||
-				strings.Contains(errMsg, "unavailable")
+				strings.Contains(errMsg, "unavailable") ||
+				strings.Contains(errMsg, "internal server error")
 
 			if isServerError && retry < maxRetries {
 				logger.WarnCF("toolloop", "Server error detected, retrying", map[string]any{
@@ -97,6 +101,44 @@ func RunToolLoop(
 				continue
 			}
 			break
+		}
+
+		// If primary failed with a server error and fallbacks are configured, try them.
+		if err != nil && len(config.FallbackCandidates) > 1 {
+			errMsg := strings.ToLower(err.Error())
+			isRetriable := strings.Contains(errMsg, "500") ||
+				strings.Contains(errMsg, "502") ||
+				strings.Contains(errMsg, "503") ||
+				strings.Contains(errMsg, "504") ||
+				strings.Contains(errMsg, "internal server error") ||
+				strings.Contains(errMsg, "rate limit") ||
+				strings.Contains(errMsg, "429") ||
+				strings.Contains(errMsg, "overloaded") ||
+				strings.Contains(errMsg, "unavailable")
+			if isRetriable {
+				// Skip the first candidate (primary) and try the rest.
+				for _, candidate := range config.FallbackCandidates[1:] {
+					p, ok := config.FallbackProviders[candidate.Provider]
+					if !ok {
+						continue
+					}
+					logger.WarnCF("toolloop", fmt.Sprintf("Primary failed, trying fallback %s/%s",
+						candidate.Provider, candidate.Model),
+						map[string]any{"task_id": config.TaskID, "primary_err": err.Error()})
+					fbResp, fbErr := p.Chat(ctx, messages, providerToolDefs, candidate.Model, llmOpts)
+					if fbErr == nil {
+						response = fbResp
+						err = nil
+						logger.InfoCF("toolloop", fmt.Sprintf("Fallback succeeded with %s/%s",
+							candidate.Provider, candidate.Model),
+							map[string]any{"task_id": config.TaskID})
+						break
+					}
+					logger.WarnCF("toolloop", fmt.Sprintf("Fallback %s/%s also failed: %v",
+						candidate.Provider, candidate.Model, fbErr),
+						map[string]any{"task_id": config.TaskID})
+				}
+			}
 		}
 
 		if err != nil {

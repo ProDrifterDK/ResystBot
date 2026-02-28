@@ -15,23 +15,24 @@ import (
 // AgentInstance represents a fully configured agent with its own workspace,
 // session manager, context builder, and tool registry.
 type AgentInstance struct {
-	ID             string
-	Name           string
-	Model          string
-	Fallbacks      []string
-	Workspace      string
-	MaxIterations  int
-	MaxTokens      int
-	Temperature    float64
-	ContextWindow  int
-	ThinkingBudget int
-	Provider       providers.LLMProvider
-	Sessions       *session.SessionManager
-	ContextBuilder *ContextBuilder
-	Tools          *tools.ToolRegistry
-	Subagents      *config.SubagentsConfig
-	SkillsFilter   []string
-	Candidates     []providers.FallbackCandidate
+	ID              string
+	Name            string
+	Model           string
+	Fallbacks       []string
+	Workspace       string
+	MaxIterations   int
+	MaxTokens       int
+	Temperature     float64
+	ContextWindow   int
+	ThinkingBudget  int
+	Provider        providers.LLMProvider
+	ProvidersByName map[string]providers.LLMProvider // provider-name → provider, for fallback routing
+	Sessions        *session.SessionManager
+	ContextBuilder  *ContextBuilder
+	Tools           *tools.ToolRegistry
+	Subagents       *config.SubagentsConfig
+	SkillsFilter    []string
+	Candidates      []providers.FallbackCandidate
 }
 
 // NewAgentInstance creates an agent instance from config.
@@ -115,24 +116,59 @@ func NewAgentInstance(
 	}
 	candidates := providers.ResolveCandidates(modelCfg, defaults.Provider)
 
+	// Build per-provider map for fallback routing.
+	// primary provider is keyed by its canonical name; fallback providers are
+	// created on demand from model_list entries.
+	providersByName := make(map[string]providers.LLMProvider)
+	// Determine primary provider name from model_list.
+	if mc, err := cfg.GetModelConfig(model); err == nil && mc != nil {
+		ref := providers.ParseModelRef(mc.Model, defaults.Provider)
+		if ref != nil {
+			providersByName[ref.Provider] = provider
+		}
+	}
+	if len(providersByName) == 0 {
+		// Fall back to keying by defaults.Provider
+		providersByName[defaults.Provider] = provider
+	}
+	// Create providers for each fallback model that isn't already in the map.
+	for _, fb := range fallbacks {
+		ref := providers.ParseModelRef(fb, defaults.Provider)
+		if ref == nil {
+			continue
+		}
+		if _, exists := providersByName[ref.Provider]; exists {
+			continue
+		}
+		mc, err := cfg.GetModelConfig(ref.Model)
+		if err != nil || mc == nil {
+			continue
+		}
+		fbProvider, _, err := providers.CreateProviderFromConfig(mc)
+		if err == nil {
+			providersByName[ref.Provider] = fbProvider
+		}
+	}
+
 	return &AgentInstance{
-		ID:             agentID,
-		Name:           agentName,
-		Model:          model,
-		Fallbacks:      fallbacks,
-		Workspace:      workspace,
-		MaxIterations:  maxIter,
-		MaxTokens:      maxTokens,
-		Temperature:    temperature,
-		ContextWindow:  contextWindow,
-		ThinkingBudget: thinkingBudget,
-		Provider:       provider,
-		Sessions:       sessionsManager,
-		ContextBuilder: contextBuilder,
-		Tools:          toolsRegistry,
-		Subagents:      subagents,
-		SkillsFilter:   skillsFilter,
-		Candidates:     candidates,
+		ID:              agentID,
+		Name:            agentName,
+		Model:           model,
+		Fallbacks:       fallbacks,
+		Workspace:       workspace,
+		MaxIterations:   maxIter,
+		MaxTokens:       maxTokens,
+		Temperature:     temperature,
+		ContextWindow:   contextWindow,
+		ThinkingBudget:  thinkingBudget,
+		Provider:        provider,
+		ProvidersByName: providersByName,
+		Sessions:        sessionsManager,
+		ContextBuilder:  contextBuilder,
+		Tools:           toolsRegistry,
+		Subagents:       subagents,
+		SkillsFilter:    skillsFilter,
+		Candidates:      candidates,
 	}
 }
 
