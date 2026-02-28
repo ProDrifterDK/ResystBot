@@ -65,6 +65,7 @@ func agentCmd() {
 	cfg, err := loadConfig()
 	if err != nil {
 		fmt.Printf("Error loading config: %v\n", err)
+		os.Stdout.Sync() //nolint:errcheck
 		os.Exit(1)
 	}
 
@@ -75,6 +76,7 @@ func agentCmd() {
 	provider, modelID, err := providers.CreateProvider(cfg)
 	if err != nil {
 		fmt.Printf("Error creating provider: %v\n", err)
+		os.Stdout.Sync() //nolint:errcheck
 		os.Exit(1)
 	}
 	// Use the resolved model ID from provider creation
@@ -136,10 +138,12 @@ func agentCmd() {
 		response, err := agentLoop.ProcessDirectWithChannel(ctx, message, sessionKey, channel, chatID)
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
+			os.Stdout.Sync() //nolint:errcheck
 			os.Exit(1)
 		}
 		if !agentLoop.HasSentMessageInRound() && response != "" {
 			fmt.Printf("\n%s %s\n", logo, response)
+			os.Stdout.Sync() //nolint:errcheck
 		}
 
 		// Wait for any spawned subagent goroutines to finish, then drain
@@ -152,6 +156,7 @@ func agentCmd() {
 		time.Sleep(200 * time.Millisecond)
 	} else {
 		fmt.Printf("%s Interactive mode (Ctrl+C to exit)\n\n", logo)
+		os.Stdout.Sync() //nolint:errcheck
 		interactiveMode(agentLoop, sessionKey, channel, chatID)
 	}
 }
@@ -182,6 +187,7 @@ func interactiveMode(agentLoop *agent.AgentLoop, sessionKey, channel, chatID str
 				return
 			}
 			fmt.Printf("Error reading input: %v\n", err)
+			os.Stdout.Sync() //nolint:errcheck
 			continue
 		}
 
@@ -199,11 +205,13 @@ func interactiveMode(agentLoop *agent.AgentLoop, sessionKey, channel, chatID str
 		response, err := agentLoop.ProcessDirectWithChannel(ctx, input, sessionKey, channel, chatID)
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
+			os.Stdout.Sync() //nolint:errcheck
 			continue
 		}
 
 		if !agentLoop.HasSentMessageInRound() && response != "" {
 			fmt.Printf("\n%s %s\n\n", logo, response)
+			os.Stdout.Sync() //nolint:errcheck
 		}
 
 		// Drain subagent results in background so the prompt stays responsive.
@@ -218,6 +226,7 @@ func simpleInteractiveMode(agentLoop *agent.AgentLoop, sessionKey, channel, chat
 	reader := bufio.NewReader(os.Stdin)
 	for {
 		fmt.Printf("%s You: ", logo)
+		os.Stdout.Sync() //nolint:errcheck
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
@@ -225,6 +234,7 @@ func simpleInteractiveMode(agentLoop *agent.AgentLoop, sessionKey, channel, chat
 				return
 			}
 			fmt.Printf("Error reading input: %v\n", err)
+			os.Stdout.Sync() //nolint:errcheck
 			continue
 		}
 
@@ -242,11 +252,13 @@ func simpleInteractiveMode(agentLoop *agent.AgentLoop, sessionKey, channel, chat
 		response, err := agentLoop.ProcessDirectWithChannel(ctx, input, sessionKey, channel, chatID)
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
+			os.Stdout.Sync() //nolint:errcheck
 			continue
 		}
 
 		if !agentLoop.HasSentMessageInRound() && response != "" {
 			fmt.Printf("\n%s %s\n\n", logo, response)
+			os.Stdout.Sync() //nolint:errcheck
 		}
 
 		// Drain subagent results in background so the prompt stays responsive.
