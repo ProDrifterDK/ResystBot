@@ -109,44 +109,65 @@ func NewAgentInstance(
 		thinkingBudget = agentCfg.ThinkingBudget
 	}
 
-	// Resolve fallback candidates
-	modelCfg := providers.ModelConfig{
-		Primary:   model,
-		Fallbacks: fallbacks,
-	}
-	candidates := providers.ResolveCandidates(modelCfg, defaults.Provider)
-
-	// Build per-provider map for fallback routing.
-	// primary provider is keyed by its canonical name; fallback providers are
-	// created on demand from model_list entries.
+	// Build candidates using the actual API model strings from model_list, not the model_name shorthands.
+	// This ensures OpenRouter gets "google/gemini-3.1-pro-preview" not just "gemini-3.1-pro-preview".
 	providersByName := make(map[string]providers.LLMProvider)
-	// Determine primary provider name from model_list.
+	var candidates []providers.FallbackCandidate
+
+	// Primary candidate
 	if mc, err := cfg.GetModelConfig(model); err == nil && mc != nil {
 		ref := providers.ParseModelRef(mc.Model, defaults.Provider)
 		if ref != nil {
+			candidates = append(candidates, providers.FallbackCandidate{Provider: ref.Provider, Model: ref.Model})
 			providersByName[ref.Provider] = provider
 		}
 	}
-	if len(providersByName) == 0 {
-		// Fall back to keying by defaults.Provider
-		providersByName[defaults.Provider] = provider
+	if len(candidates) == 0 {
+		// Fallback: parse model_name directly
+		ref := providers.ParseModelRef(model, defaults.Provider)
+		if ref != nil {
+			candidates = append(candidates, providers.FallbackCandidate{Provider: ref.Provider, Model: ref.Model})
+			providersByName[ref.Provider] = provider
+		} else {
+			providersByName[defaults.Provider] = provider
+		}
 	}
-	// Create providers for each fallback model that isn't already in the map.
+
+	// Fallback candidates — look up each fallback model in model_list to get the real API model string.
 	for _, fb := range fallbacks {
-		ref := providers.ParseModelRef(fb, defaults.Provider)
+		mc, err := cfg.GetModelConfig(fb)
+		if err != nil || mc == nil {
+			// Try parsing as a raw model ref
+			ref := providers.ParseModelRef(fb, defaults.Provider)
+			if ref == nil {
+				continue
+			}
+			if _, exists := providersByName[ref.Provider]; !exists {
+				providersByName[ref.Provider] = provider
+			}
+			candidates = append(candidates, providers.FallbackCandidate{Provider: ref.Provider, Model: ref.Model})
+			continue
+		}
+		ref := providers.ParseModelRef(mc.Model, defaults.Provider)
 		if ref == nil {
 			continue
 		}
-		if _, exists := providersByName[ref.Provider]; exists {
-			continue
+		if _, exists := providersByName[ref.Provider]; !exists {
+			fbProvider, _, fbErr := providers.CreateProviderFromConfig(mc)
+			if fbErr == nil {
+				providersByName[ref.Provider] = fbProvider
+			}
 		}
-		mc, err := cfg.GetModelConfig(ref.Model)
-		if err != nil || mc == nil {
-			continue
+		// Only add if not already in candidates
+		alreadyAdded := false
+		for _, c := range candidates {
+			if c.Provider == ref.Provider && c.Model == ref.Model {
+				alreadyAdded = true
+				break
+			}
 		}
-		fbProvider, _, err := providers.CreateProviderFromConfig(mc)
-		if err == nil {
-			providersByName[ref.Provider] = fbProvider
+		if !alreadyAdded {
+			candidates = append(candidates, providers.FallbackCandidate{Provider: ref.Provider, Model: ref.Model})
 		}
 	}
 
