@@ -269,14 +269,14 @@ func (t *ExecTool) Execute(ctx context.Context, args map[string]any) *ToolResult
 	if err != nil {
 		return &ToolResult{
 			ForLLM:  output,
-			ForUser: output,
+			ForUser: "",
 			IsError: true,
 		}
 	}
 
 	return &ToolResult{
 		ForLLM:  output,
-		ForUser: output,
+		ForUser: "",
 		IsError: false,
 	}
 }

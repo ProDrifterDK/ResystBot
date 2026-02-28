@@ -214,10 +214,18 @@ func (al *AgentLoop) DrainInbound(ctx context.Context, channel, chatID string) {
 		if !ok {
 			return
 		}
+		// System messages (subagent results) are handled by processSystemMessage which
+		// calls runAgentLoop with SendResponse:true — it publishes directly to the bus
+		// itself. We must NOT re-publish the return value here or the user gets duplicates.
+		isSystemMsg := msg.Channel == "system"
 		response, err := al.processMessage(ctx, msg)
 		if err != nil {
 			logger.WarnCF("agent", "Error processing drained inbound message",
 				map[string]any{"error": err.Error()})
+			continue
+		}
+		if isSystemMsg {
+			// Already published inside processSystemMessage via runAgentLoop(SendResponse:true).
 			continue
 		}
 		if response != "" {
@@ -254,12 +262,15 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 				continue
 			}
 
+			// System messages (subagent results) call runAgentLoop(SendResponse:true)
+			// which already publishes to the bus — don't re-publish the return value.
+			isSystemMsg := msg.Channel == "system"
 			response, err := al.processMessage(ctx, msg)
 			if err != nil {
 				response = fmt.Sprintf("Error processing message: %v", err)
 			}
 
-			if response != "" {
+			if !isSystemMsg && response != "" {
 				// Check if the message tool already sent a response during this round.
 				// If so, skip publishing to avoid duplicate messages to the user.
 				// Use default agent's tools to check (message tool is shared).
