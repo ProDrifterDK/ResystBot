@@ -198,6 +198,16 @@ func (al *AgentLoop) WaitForSubagents() {
 	}
 }
 
+// HasPendingSubagents returns true if any subagent goroutines are still running.
+func (al *AgentLoop) HasPendingSubagents() bool {
+	for _, mgr := range al.subagentManagers {
+		if mgr.HasPending() {
+			return true
+		}
+	}
+	return false
+}
+
 // DrainInbound processes all inbound bus messages that are pending right now.
 // It returns after the bus is empty or the context is cancelled.
 // This is used in CLI -m mode after WaitForSubagents to handle subagent result messages.

@@ -351,6 +351,21 @@ func (sm *SubagentManager) Wait() {
 	sm.wg.Wait()
 }
 
+// HasPending returns true if any subagent goroutines are still running.
+func (sm *SubagentManager) HasPending() bool {
+	done := make(chan struct{})
+	go func() {
+		sm.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return false
+	default:
+		return true
+	}
+}
+
 // SubagentTool executes a subagent task synchronously and returns the result.
 // Unlike SpawnTool which runs tasks asynchronously, SubagentTool waits for completion
 // and returns the result directly in the ToolResult.

@@ -146,9 +146,15 @@ func agentCmd() {
 			os.Stdout.Sync() //nolint:errcheck
 		}
 
-		// Wait for any spawned subagent goroutines to finish, then drain
-		// the inbound bus so subagent result messages are processed and
-		// any outbound replies are printed before the process exits.
+		// Emit heartbeat lines every 30s while subagents run so the
+		// tg_listener watchdog does not kill us during long background tasks.
+		for agentLoop.HasPendingSubagents() {
+			fmt.Fprintf(os.Stderr, "[heartbeat] Waiting for subagents...\n")
+			fmt.Println("")
+			os.Stdout.Sync() //nolint:errcheck
+			time.Sleep(30 * time.Second)
+		}
+		// Final blocking wait to ensure all goroutines are done before draining.
 		agentLoop.WaitForSubagents()
 		agentLoop.DrainInbound(ctx, channel, chatID)
 		// Give the outbound-listener goroutine time to print any messages
