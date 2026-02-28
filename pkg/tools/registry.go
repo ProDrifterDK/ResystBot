@@ -181,3 +181,24 @@ func (r *ToolRegistry) GetSummaries() []string {
 	}
 	return summaries
 }
+
+// Clone returns a shallow copy of the registry with a new map containing the same tool references.
+func (r *ToolRegistry) Clone() *ToolRegistry {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	cloned := &ToolRegistry{
+		tools: make(map[string]Tool, len(r.tools)),
+	}
+	for k, v := range r.tools {
+		cloned.tools[k] = v
+	}
+	return cloned
+}
+
+// Replace replaces a tool in the registry by name.
+func (r *ToolRegistry) Replace(tool Tool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.tools[tool.Name()] = tool
+}

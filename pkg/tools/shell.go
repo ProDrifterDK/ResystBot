@@ -356,3 +356,18 @@ func (t *ExecTool) SetAllowPatterns(patterns []string) error {
 	}
 	return nil
 }
+
+func (t *ExecTool) CloneWithWorkingDir(dir string) *ExecTool {
+	denyPatterns := make([]*regexp.Regexp, len(t.denyPatterns))
+	copy(denyPatterns, t.denyPatterns)
+	allowPatterns := make([]*regexp.Regexp, len(t.allowPatterns))
+	copy(allowPatterns, t.allowPatterns)
+	return &ExecTool{
+		workingDir:          dir,
+		timeout:             t.timeout,
+		denyPatterns:        denyPatterns,
+		allowPatterns:       allowPatterns,
+		restrictToWorkspace: t.restrictToWorkspace,
+		sudoPassword:        t.sudoPassword,
+	}
+}

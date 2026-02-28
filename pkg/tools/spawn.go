@@ -51,6 +51,10 @@ func (t *SpawnTool) Parameters() map[string]any {
 				"type":        "string",
 				"description": "Optional target agent ID to delegate the task to",
 			},
+			"working_dir": map[string]any{
+				"type":        "string",
+				"description": "Optional absolute path to set as the working directory for the subagent's exec tool. If not provided, uses the agent's default workspace.",
+			},
 		},
 		"required": []string{"task"},
 	}
@@ -73,6 +77,7 @@ func (t *SpawnTool) Execute(ctx context.Context, args map[string]any) *ToolResul
 
 	label, _ := args["label"].(string)
 	agentID, _ := args["agent_id"].(string)
+	workingDir, _ := args["working_dir"].(string)
 
 	// Check allowlist if targeting a specific agent
 	if agentID != "" && t.allowlistCheck != nil {
@@ -86,7 +91,7 @@ func (t *SpawnTool) Execute(ctx context.Context, args map[string]any) *ToolResul
 	}
 
 	// Pass callback to manager for async completion notification
-	result, err := t.manager.Spawn(ctx, task, label, agentID, t.originChannel, t.originChatID, t.callback)
+	result, err := t.manager.Spawn(ctx, task, label, agentID, workingDir, t.originChannel, t.originChatID, t.callback)
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("failed to spawn subagent: %v", err))
 	}

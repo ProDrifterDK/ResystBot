@@ -43,6 +43,7 @@ type SubagentTask struct {
 	Task          string
 	Label         string
 	AgentID       string
+	WorkingDir    string
 	OriginChannel string
 	OriginChatID  string
 	Status        string
@@ -152,7 +153,7 @@ func (sm *SubagentManager) RegisterTool(tool Tool) {
 
 func (sm *SubagentManager) Spawn(
 	ctx context.Context,
-	task, label, agentID, originChannel, originChatID string,
+	task, label, agentID, workingDir, originChannel, originChatID string,
 	callback AsyncCallback,
 ) (string, error) {
 	sm.mu.Lock()
@@ -166,6 +167,7 @@ func (sm *SubagentManager) Spawn(
 		Task:          task,
 		Label:         label,
 		AgentID:       agentID,
+		WorkingDir:    workingDir,
 		OriginChannel: originChannel,
 		OriginChatID:  originChatID,
 		Status:        "running",
@@ -245,6 +247,16 @@ After completing the task, provide a clear summary of what was done.`
 	hasMaxTokens := sm.hasMaxTokens
 	hasTemperature := sm.hasTemperature
 	sm.mu.RUnlock()
+
+	if task.WorkingDir != "" {
+		if execTool, ok := tools.Get("exec"); ok {
+			if et, ok := execTool.(*ExecTool); ok {
+				cloned := tools.Clone()
+				cloned.Replace(et.CloneWithWorkingDir(task.WorkingDir))
+				tools = cloned
+			}
+		}
+	}
 
 	var llmOptions map[string]any
 	if hasMaxTokens || hasTemperature {
