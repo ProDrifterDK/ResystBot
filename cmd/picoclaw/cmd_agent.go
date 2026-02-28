@@ -141,7 +141,7 @@ func agentCmd() {
 			os.Stdout.Sync() //nolint:errcheck
 			os.Exit(1)
 		}
-		if !agentLoop.HasSentMessageInRound() && response != "" {
+		if !agentLoop.HasSentMessageInRound() && response != "" && response != "SILENT" {
 			fmt.Printf("\n%s %s\n", logo, response)
 			os.Stdout.Sync() //nolint:errcheck
 		}
