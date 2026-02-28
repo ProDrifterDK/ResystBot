@@ -184,7 +184,7 @@ func registerSharedTools(
 			if !ok {
 				continue
 			}
-			manager.RegisterAgentProfile(targetAgentID, targetAgent.Provider, targetAgent.Model, targetAgent.Tools, targetAgent.Candidates, targetAgent.ProvidersByName)
+			manager.RegisterAgentProfile(targetAgentID, targetAgent.Provider, targetAgent.Model, targetAgent.Tools, targetAgent.Candidates, targetAgent.ProvidersByName, targetAgent.MaxIterations)
 		}
 	}
 

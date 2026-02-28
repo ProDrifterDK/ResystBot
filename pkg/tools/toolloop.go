@@ -86,7 +86,9 @@ func RunToolLoop(
 		var err error
 		maxRetries := 2
 		for retry := 0; retry <= maxRetries; retry++ {
-			response, err = config.Provider.Chat(ctx, messages, providerToolDefs, config.Model, llmOpts)
+			callCtx, callCancel := context.WithTimeout(ctx, 5*time.Minute)
+			response, err = config.Provider.Chat(callCtx, messages, providerToolDefs, config.Model, llmOpts)
+			callCancel()
 			if err == nil {
 				break
 			}

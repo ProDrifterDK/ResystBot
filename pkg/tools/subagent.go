@@ -57,6 +57,7 @@ type agentEntry struct {
 	tools           *ToolRegistry
 	candidates      []providers.FallbackCandidate
 	providersByName map[string]providers.LLMProvider
+	maxIterations   int
 }
 
 type SubagentManager struct {
@@ -128,6 +129,7 @@ func (sm *SubagentManager) RegisterAgentProfile(
 	tools *ToolRegistry,
 	candidates []providers.FallbackCandidate,
 	providersByName map[string]providers.LLMProvider,
+	maxIterations int,
 ) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -137,6 +139,7 @@ func (sm *SubagentManager) RegisterAgentProfile(
 		tools:           tools,
 		candidates:      candidates,
 		providersByName: providersByName,
+		maxIterations:   maxIterations,
 	}
 }
 
@@ -220,6 +223,7 @@ After completing the task, provide a clear summary of what was done.`
 	provider := sm.provider
 	var candidates []providers.FallbackCandidate
 	var providersByName map[string]providers.LLMProvider
+	maxIter := sm.maxIterations
 	if task.AgentID != "" {
 		if entry, ok := sm.agents[task.AgentID]; ok {
 			model = entry.model
@@ -231,9 +235,11 @@ After completing the task, provide a clear summary of what was done.`
 			}
 			candidates = entry.candidates
 			providersByName = entry.providersByName
+			if entry.maxIterations > 0 {
+				maxIter = entry.maxIterations
+			}
 		}
 	}
-	maxIter := sm.maxIterations
 	maxTokens := sm.maxTokens
 	temperature := sm.temperature
 	hasMaxTokens := sm.hasMaxTokens
