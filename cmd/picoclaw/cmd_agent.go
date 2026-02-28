@@ -85,6 +85,22 @@ func agentCmd() {
 	msgBus := bus.NewMessageBus()
 	agentLoop := agent.NewAgentLoop(cfg, msgBus, provider)
 
+	// internalMessages are operational status messages that should not be forwarded to the user.
+	isInternalMessage := func(content string) bool {
+		internalPrefixes := []string{
+			"Memory threshold reached",
+			"Context window exceeded",
+			"Compressing history",
+			"Optimizing conversation history",
+		}
+		for _, prefix := range internalPrefixes {
+			if strings.Contains(content, prefix) {
+				return true
+			}
+		}
+		return false
+	}
+
 	// Start a goroutine to listen for outbound messages (e.g. from the message tool)
 	go func() {
 		ctx := context.Background()
@@ -92,6 +108,12 @@ func agentCmd() {
 			msg, ok := msgBus.SubscribeOutbound(ctx)
 			if !ok {
 				break
+			}
+			// Skip internal operational status messages — these should not be sent to the user
+			if isInternalMessage(msg.Content) {
+				logger.DebugCF("agent", "Suppressing internal status message from stdout",
+					map[string]any{"content": msg.Content})
+				continue
 			}
 			// Print the outbound message to stdout so tg_listener.py can capture it
 			fmt.Printf("\n%s %s\n\n", logo, msg.Content)
