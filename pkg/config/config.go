@@ -518,6 +518,9 @@ func (c *MCPServerConfig) IsEnabled() bool {
 
 // Validate checks the MCPServerConfig for required fields.
 func (c *MCPServerConfig) Validate() error {
+	if c.Transport == "" {
+		c.Transport = "stdio"
+	}
 	switch c.Transport {
 	case "stdio":
 		if c.Command == "" {

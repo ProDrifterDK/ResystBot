@@ -68,6 +68,19 @@ func TestMCPServerConfigValidate_InvalidTransport(t *testing.T) {
 	}
 }
 
+func TestMCPServerConfigValidate_DefaultTransport(t *testing.T) {
+	cfg := MCPServerConfig{
+		Command: "npx",
+	}
+	err := cfg.Validate()
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if cfg.Transport != "stdio" {
+		t.Fatalf("expected transport to default to 'stdio', got: %q", cfg.Transport)
+	}
+}
+
 func TestMCPServerConfigIsEnabled_Default(t *testing.T) {
 	cfg := MCPServerConfig{
 		Transport: "stdio",
