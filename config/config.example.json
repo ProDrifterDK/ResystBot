@@ -6,7 +6,8 @@
       "model_name": "gpt4",
       "max_tokens": 8192,
       "temperature": 0.7,
-      "max_tool_iterations": 20
+      "max_tool_iterations": 20,
+      "mcp_servers": ["filesystem", "github"]
     }
   },
   "model_list": [
@@ -235,6 +236,32 @@
           "search_path": "/api/v1/search",
           "skills_path": "/api/v1/skills",
           "download_path": "/api/v1/download"
+        }
+      }
+    },
+    "mcp": {
+      "servers": {
+        "filesystem": {
+          "transport": "stdio",
+          "command": "npx",
+          "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/user/projects"],
+          "timeout": 30
+        },
+        "github": {
+          "transport": "stdio",
+          "command": "npx",
+          "args": ["-y", "@modelcontextprotocol/server-github"],
+          "env": {
+            "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_your_token_here"
+          }
+        },
+        "remote-api": {
+          "transport": "sse",
+          "url": "http://localhost:8080/sse",
+          "headers": {
+            "Authorization": "Bearer your-token-here"
+          },
+          "timeout": 60
         }
       }
     }
