@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/sipeed/picoclaw/pkg/logger"
 )
 
 // FallbackChain orchestrates model fallback across multiple candidates.
@@ -188,6 +190,155 @@ func (fc *FallbackChain) Execute(
 	}
 
 	// All candidates were skipped (all in cooldown).
+	return nil, &FallbackExhaustedError{Attempts: result.Attempts}
+}
+
+// ResponseValidator is a function that checks if an LLM response is acceptable.
+// Returns true if the response should be considered successful, false to try next candidate.
+type ResponseValidator func(resp *LLMResponse) bool
+
+// ExecuteWithValidator runs the fallback chain like Execute, but also applies a validator
+// to each successful (err==nil) response. If the validator returns false, the candidate is
+// skipped without applying cooldown (provider worked, model just returned unacceptable content).
+// If ALL candidates return unacceptable responses, the last result is returned without error
+// so the caller can handle it as a last resort.
+func (fc *FallbackChain) ExecuteWithValidator(
+	ctx context.Context,
+	candidates []FallbackCandidate,
+	run func(ctx context.Context, provider, model string) (*LLMResponse, error),
+	validator ResponseValidator,
+) (*FallbackResult, error) {
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("fallback: no candidates configured")
+	}
+
+	result := &FallbackResult{
+		Attempts: make([]FallbackAttempt, 0, len(candidates)),
+	}
+
+	var lastValidatorReject *FallbackResult
+
+	for i, candidate := range candidates {
+		if ctx.Err() == context.Canceled {
+			return nil, context.Canceled
+		}
+
+		if !fc.cooldown.IsAvailable(candidate.Provider) {
+			remaining := fc.cooldown.CooldownRemaining(candidate.Provider)
+			result.Attempts = append(result.Attempts, FallbackAttempt{
+				Provider: candidate.Provider,
+				Model:    candidate.Model,
+				Skipped:  true,
+				Reason:   FailoverRateLimit,
+				Error: fmt.Errorf(
+					"provider %s in cooldown (%s remaining)",
+					candidate.Provider,
+					remaining.Round(time.Second),
+				),
+			})
+			continue
+		}
+
+		start := time.Now()
+		resp, err := run(ctx, candidate.Provider, candidate.Model)
+		elapsed := time.Since(start)
+
+		if err == nil {
+			fc.cooldown.MarkSuccess(candidate.Provider)
+
+			if validator != nil && !validator(resp) {
+				logger.WarnCF("fallback", fmt.Sprintf("Provider %s model %s returned unacceptable response, trying next fallback",
+					candidate.Provider, candidate.Model),
+					map[string]any{
+						"provider": candidate.Provider,
+						"model":    candidate.Model,
+					})
+				result.Attempts = append(result.Attempts, FallbackAttempt{
+					Provider: candidate.Provider,
+					Model:    candidate.Model,
+					Duration: elapsed,
+					Reason:   FailoverReason("empty_response"),
+				})
+				lastValidatorReject = &FallbackResult{
+					Response: resp,
+					Provider: candidate.Provider,
+					Model:    candidate.Model,
+					Attempts: result.Attempts,
+				}
+				continue
+			}
+
+			result.Response = resp
+			result.Provider = candidate.Provider
+			result.Model = candidate.Model
+			return result, nil
+		}
+
+		if ctx.Err() == context.Canceled {
+			result.Attempts = append(result.Attempts, FallbackAttempt{
+				Provider: candidate.Provider,
+				Model:    candidate.Model,
+				Error:    err,
+				Duration: elapsed,
+			})
+			return nil, context.Canceled
+		}
+
+		failErr := ClassifyError(err, candidate.Provider, candidate.Model)
+
+		if failErr == nil {
+			result.Attempts = append(result.Attempts, FallbackAttempt{
+				Provider: candidate.Provider,
+				Model:    candidate.Model,
+				Error:    err,
+				Duration: elapsed,
+			})
+			return nil, fmt.Errorf("fallback: unclassified error from %s/%s: %w",
+				candidate.Provider, candidate.Model, err)
+		}
+
+		if !failErr.IsRetriable() {
+			result.Attempts = append(result.Attempts, FallbackAttempt{
+				Provider: candidate.Provider,
+				Model:    candidate.Model,
+				Error:    failErr,
+				Reason:   failErr.Reason,
+				Duration: elapsed,
+			})
+			return nil, failErr
+		}
+
+		fc.cooldown.MarkFailure(candidate.Provider, failErr.Reason)
+		result.Attempts = append(result.Attempts, FallbackAttempt{
+			Provider: candidate.Provider,
+			Model:    candidate.Model,
+			Error:    failErr,
+			Reason:   failErr.Reason,
+			Duration: elapsed,
+		})
+
+		if i == len(candidates)-1 {
+			if lastValidatorReject != nil {
+				logger.WarnCF("fallback", "All candidates exhausted; returning last unacceptable response as last resort",
+					map[string]any{
+						"provider": lastValidatorReject.Provider,
+						"model":    lastValidatorReject.Model,
+					})
+				return lastValidatorReject, nil
+			}
+			return nil, &FallbackExhaustedError{Attempts: result.Attempts}
+		}
+	}
+
+	if lastValidatorReject != nil {
+		logger.WarnCF("fallback", "All candidates exhausted (skipped/validator); returning last unacceptable response as last resort",
+			map[string]any{
+				"provider": lastValidatorReject.Provider,
+				"model":    lastValidatorReject.Model,
+			})
+		return lastValidatorReject, nil
+	}
+
 	return nil, &FallbackExhaustedError{Attempts: result.Attempts}
 }
 

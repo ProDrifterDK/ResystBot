@@ -500,7 +500,7 @@ type MCPServerConfig struct {
 	Transport  string            `json:"transport"`
 	Command    string            `json:"command,omitempty"`
 	Args       []string          `json:"args,omitempty"`
-	Env        []string          `json:"env,omitempty"`
+	Env        map[string]string `json:"env,omitempty"`
 	URL        string            `json:"url,omitempty"`
 	Headers    map[string]string `json:"headers,omitempty"`
 	Enabled    *bool             `json:"enabled,omitempty"`

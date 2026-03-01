@@ -85,7 +85,11 @@ func (m *Manager) connectServer(ctx context.Context, name string, cfg config.MCP
 
 	switch cfg.Transport {
 	case "stdio":
-		c, err = mcpclient.NewStdioMCPClient(cfg.Command, cfg.Env, cfg.Args...)
+		envSlice := make([]string, 0, len(cfg.Env))
+		for k, v := range cfg.Env {
+			envSlice = append(envSlice, k+"="+v)
+		}
+		c, err = mcpclient.NewStdioMCPClient(cfg.Command, envSlice, cfg.Args...)
 	case "sse":
 		c, err = mcpclient.NewSSEMCPClient(cfg.URL, mcpclient.WithHeaders(cfg.Headers))
 	default:

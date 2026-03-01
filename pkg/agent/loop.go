@@ -693,7 +693,10 @@ func (al *AgentLoop) runLLMIteration(
 				llmOpts["context_window"] = agent.ContextWindow
 			}
 			if len(agent.Candidates) > 1 && al.fallback != nil {
-				fbResult, fbErr := al.fallback.Execute(ctx, agent.Candidates,
+				validator := func(resp *providers.LLMResponse) bool {
+					return resp != nil && (resp.Content != "" || len(resp.ToolCalls) > 0)
+				}
+				fbResult, fbErr := al.fallback.ExecuteWithValidator(ctx, agent.Candidates,
 					func(ctx context.Context, providerName, model string) (*providers.LLMResponse, error) {
 						p, ok := agent.ProvidersByName[providerName]
 						if !ok {
@@ -701,6 +704,7 @@ func (al *AgentLoop) runLLMIteration(
 						}
 						return p.Chat(ctx, messages, providerToolDefs, model, llmOpts)
 					},
+					validator,
 				)
 				if fbErr != nil {
 					return nil, fbErr
