@@ -12,13 +12,15 @@ import (
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
-// subagentLogPath returns the path to the subagent progress log file.
+// subagentLogPath returns the path to today's subagent progress log file.
+// Files are named subagents-YYYY-MM-DD.log for daily rotation.
 func subagentLogPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = os.Getenv("HOME")
 	}
-	return filepath.Join(home, ".picoclaw", "workspace", "logs", "subagents.log")
+	date := time.Now().Format("2006-01-02")
+	return filepath.Join(home, ".picoclaw", "workspace", "logs", fmt.Sprintf("subagents-%s.log", date))
 }
 
 // appendSubagentLog writes a timestamped line to the subagent progress log.
