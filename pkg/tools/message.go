@@ -3,11 +3,13 @@ package tools
 import (
 	"context"
 	"fmt"
+	"sync"
 )
 
 type SendCallback func(channel, chatID, content string) error
 
 type MessageTool struct {
+	mu             sync.Mutex
 	sendCallback   SendCallback
 	defaultChannel string
 	defaultChatID  string
@@ -48,6 +50,8 @@ func (t *MessageTool) Parameters() map[string]any {
 }
 
 func (t *MessageTool) SetContext(channel, chatID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.defaultChannel = channel
 	t.defaultChatID = chatID
 	t.sentInRound = false // Reset send tracking for new processing round
@@ -55,6 +59,8 @@ func (t *MessageTool) SetContext(channel, chatID string) {
 
 // HasSentInRound returns true if the message tool sent a message during the current round.
 func (t *MessageTool) HasSentInRound() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	return t.sentInRound
 }
 
@@ -94,7 +100,9 @@ func (t *MessageTool) Execute(ctx context.Context, args map[string]any) *ToolRes
 		}
 	}
 
+	t.mu.Lock()
 	t.sentInRound = true
+	t.mu.Unlock()
 	// Silent: user already received the message directly
 	return &ToolResult{
 		ForLLM: fmt.Sprintf("Message sent to %s:%s", channel, chatID),

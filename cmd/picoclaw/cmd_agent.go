@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -121,6 +122,10 @@ func agentCmd() {
 		return false
 	}
 
+	// outboundPrinted counts how many 🦞 lines have been written to stdout by the outbound goroutine.
+	// Used after DrainInbound to detect whether a fallback line must be printed.
+	var outboundPrinted int64
+
 	// Start a goroutine to listen for outbound messages (e.g. from the message tool).
 	// Each message is flushed immediately with os.Stdout.Sync() so tg_listener.py
 	// receives it right away even when picoclaw's stdout is piped (OS pipe buffer).
@@ -141,6 +146,7 @@ func agentCmd() {
 			// Flush immediately so the pipe reader sees it without waiting for more data.
 			fmt.Printf("\n%s %s\n\n", logo, msg.Content)
 			os.Stdout.Sync() //nolint:errcheck
+			atomic.AddInt64(&outboundPrinted, 1)
 		}
 	}()
 
@@ -168,7 +174,9 @@ func agentCmd() {
 
 		// Emit heartbeat lines every 30s while subagents run so the
 		// tg_listener watchdog does not kill us during long background tasks.
+		hadSubagents := false
 		for agentLoop.HasPendingSubagents() {
+			hadSubagents = true
 			fmt.Fprintf(os.Stderr, "[heartbeat] Waiting for subagents...\n")
 			fmt.Println("")
 			os.Stdout.Sync() //nolint:errcheck
@@ -176,6 +184,12 @@ func agentCmd() {
 		}
 		// Final blocking wait to ensure all goroutines are done before draining.
 		agentLoop.WaitForSubagents()
+		if agentLoop.HasPendingSubagents() {
+			hadSubagents = true
+		}
+
+		// Snapshot printed count before drain so we can detect drain-phase output.
+		printedBeforeDrain := atomic.LoadInt64(&outboundPrinted)
 
 		// Keep emitting stdout keepalives during DrainInbound so tg_listener watchdog doesn't fire
 		drainDone := make(chan struct{})
@@ -197,7 +211,14 @@ func agentCmd() {
 		}
 		// Give the outbound-listener goroutine time to print any messages
 		// that DrainInbound triggered via bus.PublishOutbound.
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(2 * time.Second)
+
+		// Guaranteed fallback: if subagents ran but nothing was printed to stdout
+		// during the drain phase, emit a line so tg_listener.py always has output to parse.
+		if hadSubagents && atomic.LoadInt64(&outboundPrinted) == printedBeforeDrain {
+			fmt.Println("🦞 ✅ Background tasks completed. Check subagent results for details.")
+			os.Stdout.Sync() //nolint:errcheck
+		}
 	} else {
 		fmt.Printf("%s Interactive mode (Ctrl+C to exit)\n\n", logo)
 		os.Stdout.Sync() //nolint:errcheck
