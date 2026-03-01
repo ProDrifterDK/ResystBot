@@ -1,11 +1,14 @@
 package agent
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/mcp"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/routing"
 	"github.com/sipeed/picoclaw/pkg/session"
@@ -33,6 +36,7 @@ type AgentInstance struct {
 	Subagents       *config.SubagentsConfig
 	SkillsFilter    []string
 	Candidates      []providers.FallbackCandidate
+	MCPManager      *mcp.Manager
 }
 
 // NewAgentInstance creates an agent instance from config.
@@ -56,6 +60,28 @@ func NewAgentInstance(
 	toolsRegistry.Register(tools.NewExecToolWithConfig(workspace, restrict, cfg))
 	toolsRegistry.Register(tools.NewEditFileTool(workspace, restrict))
 	toolsRegistry.Register(tools.NewAppendFileTool(workspace, restrict))
+
+	// MCP tool initialization — skipped silently if no servers are configured
+	var mcpManager *mcp.Manager
+	if len(cfg.Tools.MCP.Servers) > 0 {
+		mcpCtx := context.Background()
+		mcpMgr, err := mcp.NewManager(mcpCtx, cfg.Tools.MCP)
+		if err != nil {
+			logger.WarnCF("agent", "MCP manager initialization failed", map[string]any{
+				"error": err.Error(),
+			})
+		} else {
+			mcpManager = mcpMgr
+			var agentMCPServers []string
+			if agentCfg != nil {
+				agentMCPServers = agentCfg.MCPServers
+			}
+			count := mcp.RegisterMCPTools(mcpMgr, toolsRegistry, agentMCPServers)
+			logger.InfoCF("agent", "Registered MCP tools", map[string]any{
+				"count": count,
+			})
+		}
+	}
 
 	sessionsDir := filepath.Join(workspace, "sessions")
 	sessionsManager := session.NewSessionManager(sessionsDir)
@@ -190,6 +216,7 @@ func NewAgentInstance(
 		Subagents:       subagents,
 		SkillsFilter:    skillsFilter,
 		Candidates:      candidates,
+		MCPManager:      mcpManager,
 	}
 }
 

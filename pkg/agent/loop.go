@@ -340,6 +340,24 @@ func (al *AgentLoop) Stop() {
 	al.running.Store(false)
 }
 
+// Shutdown gracefully shuts down the agent loop, closing all MCP server connections.
+func (al *AgentLoop) Shutdown(ctx context.Context) {
+	for _, agentID := range al.registry.ListAgentIDs() {
+		agent, ok := al.registry.GetAgent(agentID)
+		if !ok {
+			continue
+		}
+		if agent.MCPManager != nil {
+			if err := agent.MCPManager.Shutdown(ctx); err != nil {
+				logger.WarnCF("agent", "Error shutting down MCP manager", map[string]any{
+					"agent_id": agentID,
+					"error":    err.Error(),
+				})
+			}
+		}
+	}
+}
+
 func (al *AgentLoop) RegisterTool(tool tools.Tool) {
 	for _, agentID := range al.registry.ListAgentIDs() {
 		if agent, ok := al.registry.GetAgent(agentID); ok {

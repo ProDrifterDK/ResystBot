@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/chzyer/readline"
@@ -86,6 +88,24 @@ func agentCmd() {
 
 	msgBus := bus.NewMessageBus()
 	agentLoop := agent.NewAgentLoop(cfg, msgBus, provider)
+
+	// Graceful shutdown on SIGINT or SIGTERM
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		sig := <-sigCh
+		logger.InfoCF("agent", "Received signal, shutting down", map[string]any{"signal": sig.String()})
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		agentLoop.Shutdown(shutdownCtx)
+		os.Exit(0)
+	}()
+	defer func() {
+		signal.Stop(sigCh)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		agentLoop.Shutdown(shutdownCtx)
+	}()
 
 	// internalMessages are operational status messages that should not be forwarded to the user.
 	isInternalMessage := func(content string) bool {
