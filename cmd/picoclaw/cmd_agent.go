@@ -22,7 +22,31 @@ import (
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/providers"
+	"github.com/sipeed/picoclaw/pkg/tools"
 )
+
+// readLastLines reads the last n lines from a file.
+// Returns an empty string if the file cannot be read.
+func readLastLines(path string, n int) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	var lines []string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	start := len(lines) - n
+	if start < 0 {
+		start = 0
+	}
+	return strings.Join(lines[start:], "\n")
+}
 
 func agentCmd() {
 	message := ""
@@ -175,12 +199,33 @@ func agentCmd() {
 		// Emit heartbeat lines every 30s while subagents run so the
 		// tg_listener watchdog does not kill us during long background tasks.
 		hadSubagents := false
+		startTime := time.Now()
+		lastStatusReport := time.Now()
+		completionPrinted := false
 		for agentLoop.HasPendingSubagents() {
 			hadSubagents = true
 			fmt.Fprintf(os.Stderr, "[heartbeat] Waiting for subagents...\n")
 			fmt.Println("")
 			os.Stdout.Sync() //nolint:errcheck
+			if time.Since(lastStatusReport) >= 5*time.Minute {
+				logSnippet := readLastLines(tools.SubagentLogPath(), 20)
+				elapsed := time.Since(startTime).Round(time.Minute)
+				prompt := fmt.Sprintf(
+					"[System: Subagent Progress Report - RESPOND DIRECTLY TO THE USER]\nYour subagent has been running for %s. Here is the latest activity from the subagent log:\n\n%s\n\nWrite a brief progress update for the user. Address them directly. Do NOT mention \"system\", \"prompt\", or describe what you are doing. Just tell the user what the subagent is working on. 2-3 sentences max. In Spanish.\n\nIMPORTANT: Your response will be sent directly to the user via Telegram. Do NOT write about sending messages or updating the user. Write the actual message itself.",
+					elapsed,
+					logSnippet,
+				)
+				statusCtx, statusCancel := context.WithTimeout(ctx, 2*time.Minute)
+				agentLoop.PublishStatusUpdate(statusCtx, prompt, channel, chatID)
+				statusCancel()
+				lastStatusReport = time.Now()
+			}
 			time.Sleep(30 * time.Second)
+		}
+		if hadSubagents && !completionPrinted {
+			fmt.Println("🦞 ✅ Subagent task completed!")
+			os.Stdout.Sync() //nolint:errcheck
+			completionPrinted = true
 		}
 		// Final blocking wait to ensure all goroutines are done before draining.
 		agentLoop.WaitForSubagents()

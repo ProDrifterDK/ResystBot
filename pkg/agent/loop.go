@@ -419,7 +419,58 @@ func (al *AgentLoop) ProcessHeartbeat(ctx context.Context, content, channel, cha
 		DefaultResponse: "SILENT",
 		EnableSummary:   false,
 		SendResponse:    false,
-		NoHistory:       true, // Don't load session history for heartbeat
+		NoHistory:       true,
+	})
+}
+
+// PublishStatusUpdate runs the status-check prompt through the main agent LLM
+// (without session history) and publishes the response to the outbound bus so
+// the outbound goroutine prints it to stdout → tg_listener → Telegram.
+func (al *AgentLoop) PublishStatusUpdate(ctx context.Context, content, channel, chatID string) {
+	response, err := al.ProcessHeartbeat(ctx, content, channel, chatID)
+	if err != nil {
+		logger.WarnCF("agent", "Status update LLM call failed", map[string]any{"error": err.Error()})
+		return
+	}
+	if response == "" || response == "SILENT" {
+		return
+	}
+	// Filter meta-responses where the LLM describes sending a message instead of being the message.
+	metaPhrases := []string{
+		"I have updated",
+		"I've updated",
+		"I have sent",
+		"I've sent",
+		"Ya le he enviado",
+		"He enviado",
+		"He actualizado",
+		"I have informed",
+		"I've informed",
+		"I have notified",
+		"I've notified",
+		"I have reported",
+		"I've reported",
+		"status update to",
+		"update to the user",
+		"update to Alan",
+		"sent the update",
+	}
+	lowerResp := strings.ToLower(response)
+	for _, phrase := range metaPhrases {
+		if strings.Contains(lowerResp, strings.ToLower(phrase)) {
+			preview := response
+			if len(preview) > 120 {
+				preview = preview[:120]
+			}
+			logger.WarnCF("agent", "Suppressing meta-response from status update (LLM described sending instead of writing message)",
+				map[string]any{"response_preview": preview})
+			return
+		}
+	}
+	al.bus.PublishOutbound(bus.OutboundMessage{
+		Channel: channel,
+		ChatID:  chatID,
+		Content: response,
 	})
 }
 
