@@ -193,8 +193,10 @@ func agentCmd() {
 
 		// Keep emitting stdout keepalives during DrainInbound so tg_listener watchdog doesn't fire
 		drainDone := make(chan struct{})
+		drainCtx, drainCancel := context.WithTimeout(ctx, 3*time.Minute)
+		defer drainCancel()
 		go func() {
-			agentLoop.DrainInbound(ctx, channel, chatID)
+			agentLoop.DrainInbound(drainCtx, channel, chatID)
 			close(drainDone)
 		}()
 		keepaliveTicker := time.NewTicker(30 * time.Second)
