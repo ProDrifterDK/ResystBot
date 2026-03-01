@@ -141,6 +141,7 @@ type AgentConfig struct {
 	MaxToolIterations int               `json:"max_tool_iterations,omitempty"`
 	ThinkingBudget    int               `json:"thinking_budget,omitempty"`
 	ContextWindow     int               `json:"context_window,omitempty"`
+	MCPServers        []string          `json:"mcp_servers,omitempty"`
 }
 
 type SubagentsConfig struct {
@@ -486,6 +487,50 @@ type ToolsConfig struct {
 	Cron   CronToolsConfig   `json:"cron"`
 	Exec   ExecConfig        `json:"exec"`
 	Skills SkillsToolsConfig `json:"skills"`
+	MCP    MCPConfig         `json:"mcp,omitempty"`
+}
+
+// MCPConfig holds configuration for MCP (Model Context Protocol) servers.
+type MCPConfig struct {
+	Servers map[string]MCPServerConfig `json:"servers,omitempty"`
+}
+
+// MCPServerConfig configures a single MCP server connection.
+type MCPServerConfig struct {
+	Transport  string            `json:"transport"`
+	Command    string            `json:"command,omitempty"`
+	Args       []string          `json:"args,omitempty"`
+	Env        []string          `json:"env,omitempty"`
+	URL        string            `json:"url,omitempty"`
+	Headers    map[string]string `json:"headers,omitempty"`
+	Enabled    *bool             `json:"enabled,omitempty"`
+	Timeout    int               `json:"timeout,omitempty"`
+	MaxRetries int               `json:"max_retries,omitempty"`
+}
+
+// IsEnabled returns whether the server is enabled (defaults to true).
+func (c *MCPServerConfig) IsEnabled() bool {
+	if c.Enabled == nil {
+		return true
+	}
+	return *c.Enabled
+}
+
+// Validate checks the MCPServerConfig for required fields.
+func (c *MCPServerConfig) Validate() error {
+	switch c.Transport {
+	case "stdio":
+		if c.Command == "" {
+			return fmt.Errorf("stdio transport requires 'command'")
+		}
+	case "sse":
+		if c.URL == "" {
+			return fmt.Errorf("sse transport requires 'url'")
+		}
+	default:
+		return fmt.Errorf("unsupported transport: %q (use 'stdio' or 'sse')", c.Transport)
+	}
+	return nil
 }
 
 type SkillsToolsConfig struct {

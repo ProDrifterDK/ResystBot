@@ -5,6 +5,9 @@
 
 package config
 
+// DefaultMCPTimeout is the default timeout in seconds for MCP tool calls.
+const DefaultMCPTimeout = 30
+
 // DefaultConfig returns the default configuration for PicoClaw.
 func DefaultConfig() *Config {
 	return &Config{
