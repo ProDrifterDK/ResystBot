@@ -6,15 +6,16 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
-// subagentLogPath returns the path to today's subagent progress log file.
+// SubagentLogPath returns the path to today's subagent progress log file.
 // Files are named subagents-YYYY-MM-DD.log for daily rotation.
-func subagentLogPath() string {
+func SubagentLogPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = os.Getenv("HOME")
@@ -25,7 +26,7 @@ func subagentLogPath() string {
 
 // appendSubagentLog writes a timestamped line to the subagent progress log.
 func appendSubagentLog(taskID, label, event, detail string) {
-	path := subagentLogPath()
+	path := SubagentLogPath()
 	_ = os.MkdirAll(filepath.Dir(path), 0o755)
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
@@ -67,6 +68,7 @@ type SubagentManager struct {
 	tasks          map[string]*SubagentTask
 	mu             sync.RWMutex
 	wg             sync.WaitGroup
+	pendingCount   atomic.Int64
 	provider       providers.LLMProvider
 	defaultModel   string
 	bus            *bus.MessageBus
@@ -179,6 +181,7 @@ func (sm *SubagentManager) Spawn(
 
 	// Start task in background with context cancellation support
 	sm.wg.Add(1)
+	sm.pendingCount.Add(1)
 	go sm.runTask(ctx, subagentTask, callback)
 
 	if label != "" {
@@ -189,6 +192,7 @@ func (sm *SubagentManager) Spawn(
 
 func (sm *SubagentManager) runTask(ctx context.Context, task *SubagentTask, callback AsyncCallback) {
 	defer sm.wg.Done()
+	defer sm.pendingCount.Add(-1)
 	task.Status = "running"
 	task.Created = time.Now().UnixMilli()
 	appendSubagentLog(task.ID, task.Label, "START", task.Task)
@@ -373,17 +377,7 @@ func (sm *SubagentManager) Wait() {
 
 // HasPending returns true if any subagent goroutines are still running.
 func (sm *SubagentManager) HasPending() bool {
-	done := make(chan struct{})
-	go func() {
-		sm.wg.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-		return false
-	default:
-		return true
-	}
+	return sm.pendingCount.Load() > 0
 }
 
 // SubagentTool executes a subagent task synchronously and returns the result.
