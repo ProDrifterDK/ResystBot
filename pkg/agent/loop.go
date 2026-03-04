@@ -855,39 +855,64 @@ func (al *AgentLoop) runLLMIteration(
 			return "", iteration, fmt.Errorf("LLM call failed after retries: %w", err)
 		}
 
-		// Check if no tool calls - we're done
+		// Check if no native tool calls - we're done... mostly
 		if len(response.ToolCalls) == 0 {
-			finalContent = response.Content
-			if finalContent == "" {
-				logger.WarnCF("agent", "LLM returned empty response with no tool calls, retrying",
-					map[string]any{
-						"agent_id":  agent.ID,
-						"iteration": iteration,
-					})
-
-				// Add a system message to prompt the LLM to respond, but only if we haven't already
-				if len(messages) > 0 && messages[len(messages)-1].Content != "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]" {
-					messages = append(messages, providers.Message{
-						Role:    "user",
-						Content: "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]",
-					})
+			// FALLBACK: Attempt to parse XML-style hallucinated tool calls
+			parsedXMLCalls := al.extractXMLToolCalls(response.Content, providerToolDefs)
+			if len(parsedXMLCalls) > 0 {
+				response.ToolCalls = parsedXMLCalls
+				
+				// Strip the XML tags out so the user doesn't see them
+				for _, call := range parsedXMLCalls {
+					xmlTagStart := fmt.Sprintf("<%s>", call.Name)
+					xmlTagEnd := fmt.Sprintf("</%s>", call.Name)
+					
+					startIdx := strings.Index(response.Content, xmlTagStart)
+					if startIdx != -1 {
+						endIdx := strings.Index(response.Content[startIdx:], xmlTagEnd)
+						if endIdx != -1 {
+							endIdx += startIdx + len(xmlTagEnd)
+							response.Content = response.Content[:startIdx] + response.Content[endIdx:]
+						}
+					}
 				}
-				continue
+				response.Content = strings.TrimSpace(response.Content)
+				
+				logger.InfoCF("agent", "Recovered XML tool calls using fallback parser",
+					map[string]any{"count": len(parsedXMLCalls)})
+			} else {
+				finalContent = response.Content
+				if finalContent == "" {
+					logger.WarnCF("agent", "LLM returned empty response with no tool calls, retrying",
+						map[string]any{
+							"agent_id":  agent.ID,
+							"iteration": iteration,
+						})
+
+					// Add a system message to prompt the LLM to respond, but only if we haven't already
+					if len(messages) > 0 && messages[len(messages)-1].Content != "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]" {
+						messages = append(messages, providers.Message{
+							Role:    "user",
+							Content: "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]",
+						})
+					}
+					continue
+				}
+
+				// Clean up any system notes from the final content if the LLM echoed them
+				finalContent = strings.TrimPrefix(finalContent, "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]\n\n")
+				finalContent = strings.TrimPrefix(finalContent, "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]\n")
+				finalContent = strings.TrimPrefix(finalContent, "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]")
+				finalContent = strings.TrimSpace(finalContent)
+
+				logger.InfoCF("agent", "LLM response without tool calls (direct answer)",
+					map[string]any{
+						"agent_id":      agent.ID,
+						"iteration":     iteration,
+						"content_chars": len(finalContent),
+					})
+				break
 			}
-
-			// Clean up any system notes from the final content if the LLM echoed them
-			finalContent = strings.TrimPrefix(finalContent, "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]\n\n")
-			finalContent = strings.TrimPrefix(finalContent, "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]\n")
-			finalContent = strings.TrimPrefix(finalContent, "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]")
-			finalContent = strings.TrimSpace(finalContent)
-
-			logger.InfoCF("agent", "LLM response without tool calls (direct answer)",
-				map[string]any{
-					"agent_id":      agent.ID,
-					"iteration":     iteration,
-					"content_chars": len(finalContent),
-				})
-			break
 		}
 
 		normalizedToolCalls := make([]providers.ToolCall, 0, len(response.ToolCalls))
@@ -1053,6 +1078,21 @@ func (al *AgentLoop) maybeSummarize(agent *AgentInstance, sessionKey, channel, c
 				al.summarizeSession(agent, sessionKey)
 			}()
 		}
+	}
+}
+
+// WaitForSummarization blocks until all background summarization tasks have completed.
+func (al *AgentLoop) WaitForSummarization() {
+	for {
+		hasTask := false
+		al.summarizing.Range(func(key, value any) bool {
+			hasTask = true
+			return false // break loop
+		})
+		if !hasTask {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 
@@ -1541,4 +1581,78 @@ func extractParentPeer(msg bus.InboundMessage) *routing.RoutePeer {
 		return nil
 	}
 	return &routing.RoutePeer{Kind: parentKind, ID: parentID}
+}
+
+func (al *AgentLoop) extractXMLToolCalls(content string, defs []providers.ToolDefinition) []providers.ToolCall {
+	var result []providers.ToolCall
+	
+	for _, def := range defs {
+		toolName := strings.TrimSpace(def.Function.Name)
+		if toolName == "" {
+			continue
+		}
+		
+		startTag := fmt.Sprintf("<%s>", toolName)
+		endTag := fmt.Sprintf("</%s>", toolName)
+		
+		for {
+			startIdx := strings.Index(content, startTag)
+			if startIdx == -1 {
+				break
+			}
+			endIdx := strings.Index(content[startIdx:], endTag)
+			if endIdx == -1 {
+				break
+			}
+			endIdx += startIdx + len(endTag)
+			
+			block := content[startIdx:endIdx]
+			
+			// Replace found block with padding spaces to avoid infinite loops across multiple identical calls
+			content = content[:startIdx] + strings.Repeat(" ", endIdx-startIdx) + content[endIdx:]
+			
+			args := make(map[string]any)
+			
+			// Try to automatically detect internal arguments block
+			if props, ok := def.Function.Parameters["properties"].(map[string]any); ok {
+				for argName := range props {
+					argStartTag := fmt.Sprintf("<%s>", argName)
+					argEndTag := fmt.Sprintf("</%s>", argName)
+					
+					aStart := strings.Index(block, argStartTag)
+					aEnd := strings.Index(block, argEndTag)
+					if aStart != -1 && aEnd != -1 && aStart < aEnd {
+						args[argName] = strings.TrimSpace(block[aStart+len(argStartTag) : aEnd])
+					}
+				}
+			}
+			
+			// Some models might just put the raw text straight inside the tool tag without named arg wrappers
+			// e.g. `<message>Hello</message>` instead of `<message><text>Hello</text></message>`
+			if len(args) == 0 {
+				innerContent := strings.TrimSpace(block[len(startTag) : len(block)-len(endTag)])
+				
+				// Try to guess which property it belongs to (e.g., "command" for exec, "text" for message)
+				if props, ok := def.Function.Parameters["properties"].(map[string]any); ok && len(props) == 1 {
+					for argName := range props {
+						args[argName] = innerContent
+					}
+				}
+			}
+			
+			argsJSON, _ := json.Marshal(args)
+			result = append(result, providers.ToolCall{
+				ID:   fmt.Sprintf("call_xml_%d_%s", time.Now().UnixNano(), toolName),
+				Type: "function",
+				Name: toolName,
+				Function: &providers.FunctionCall{
+					Name:      toolName,
+					Arguments: string(argsJSON),
+				},
+				Arguments: args,
+			})
+		}
+	}
+	
+	return result
 }

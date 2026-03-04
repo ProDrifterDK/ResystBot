@@ -101,6 +101,24 @@ func (p *Provider) Chat(
 		requestBody[fieldName] = maxTokens
 	}
 
+	// For Ollama (detected by API key, base URL, or model name), we must forcefully inject num_ctx
+	// otherwise it defaults to 2048 tokens, silently truncating long conversation histories.
+	if strings.Contains(p.apiBase, "11434") || p.apiKey == "ollama" || strings.Contains(strings.ToLower(model), "ollama") {
+		numCtx := 8192
+		if cw, ok := asInt(options["context_window"]); ok && cw > 0 {
+			numCtx = cw
+		} else if mt, ok := asInt(options["max_tokens"]); ok && mt > 0 {
+			numCtx = mt
+		}
+
+		if numCtx > 0 {
+			if _, exists := requestBody["options"]; !exists {
+				requestBody["options"] = map[string]any{}
+			}
+			requestBody["options"].(map[string]any)["num_ctx"] = numCtx
+		}
+	}
+
 	if temperature, ok := asFloat(options["temperature"]); ok {
 		lowerModel := strings.ToLower(model)
 		// Kimi k2 models only support temperature=1.

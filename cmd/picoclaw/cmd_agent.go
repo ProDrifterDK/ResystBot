@@ -229,6 +229,7 @@ func agentCmd() {
 		}
 		// Final blocking wait to ensure all goroutines are done before draining.
 		agentLoop.WaitForSubagents()
+		agentLoop.WaitForSummarization()
 		if agentLoop.HasPendingSubagents() {
 			hadSubagents = true
 		}
