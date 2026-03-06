@@ -43,6 +43,17 @@ var (
 		substr("context deadline exceeded"),
 	}
 
+	connectionPatterns = []errorPattern{
+		substr("eof"),
+		substr("connection reset"),
+		substr("connection refused"),
+		substr("broken pipe"),
+		substr("no such host"),
+		substr("network is unreachable"),
+		substr("connection timed out"),
+		substr("i/o timeout"),
+	}
+
 	billingPatterns = []errorPattern{
 		rxp(`\b402\b`),
 		substr("payment required"),
@@ -186,6 +197,9 @@ func classifyByMessage(msg string) FailoverReason {
 		return FailoverBilling
 	}
 	if matchesAny(msg, timeoutPatterns) {
+		return FailoverTimeout
+	}
+	if matchesAny(msg, connectionPatterns) {
 		return FailoverTimeout
 	}
 	if matchesAny(msg, authPatterns) {

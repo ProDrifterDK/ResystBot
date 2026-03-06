@@ -855,6 +855,17 @@ func (al *AgentLoop) runLLMIteration(
 			return "", iteration, fmt.Errorf("LLM call failed after retries: %w", err)
 		}
 
+		if response.Usage != nil {
+			logger.InfoCF("agent", "LLM token usage",
+				map[string]any{
+					"agent_id":          agent.ID,
+					"iteration":         iteration,
+					"prompt_tokens":     response.Usage.PromptTokens,
+					"completion_tokens": response.Usage.CompletionTokens,
+					"total_tokens":      response.Usage.TotalTokens,
+				})
+		}
+
 		// Check if no native tool calls - we're done... mostly
 		if len(response.ToolCalls) == 0 {
 			// FALLBACK: Attempt to parse XML-style hallucinated tool calls
