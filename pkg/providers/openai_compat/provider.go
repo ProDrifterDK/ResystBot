@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/sipeed/picoclaw/pkg/providers/protocoltypes"
 )
@@ -40,7 +39,7 @@ func NewProvider(apiKey, apiBase, proxy string) *Provider {
 
 func NewProviderWithMaxTokensField(apiKey, apiBase, proxy, maxTokensField string) *Provider {
 	client := &http.Client{
-		Timeout: 120 * time.Second,
+		Timeout: 0,
 	}
 
 	if proxy != "" {
