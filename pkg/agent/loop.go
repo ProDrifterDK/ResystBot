@@ -633,10 +633,12 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, agent *AgentInstance, opt
 	agent.Sessions.AddMessage(opts.SessionKey, "user", opts.UserMessage)
 
 	// 4. Run LLM iteration loop
-	finalContent, iteration, err := al.runLLMIteration(ctx, agent, messages, opts)
+	finalMsg, iteration, err := al.runLLMIteration(ctx, agent, messages, opts)
 	if err != nil {
 		return "", err
 	}
+
+	finalContent := finalMsg.Content
 
 	// If last tool had ForUser content and we already sent it, we might not need to send final response
 	// This is controlled by the tool's Silent flag and ForUser content
@@ -647,7 +649,12 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, agent *AgentInstance, opt
 	}
 
 	// 6. Save final assistant message to session
-	agent.Sessions.AddMessage(opts.SessionKey, "assistant", finalContent)
+	agent.Sessions.AddFullMessage(opts.SessionKey, providers.Message{
+		Role:             "assistant",
+		Content:          finalContent,
+		ReasoningContent: finalMsg.ReasoningContent,
+		ReasoningDetails: finalMsg.ReasoningDetails,
+	})
 	agent.Sessions.Save(opts.SessionKey)
 
 	// 7. Optional: summarization
@@ -683,9 +690,9 @@ func (al *AgentLoop) runLLMIteration(
 	agent *AgentInstance,
 	messages []providers.Message,
 	opts processOptions,
-) (string, int, error) {
+) (providers.Message, int, error) {
 	iteration := 0
-	var finalContent string
+	var finalMsg providers.Message
 
 	for iteration < agent.MaxIterations {
 		iteration++
@@ -739,6 +746,7 @@ func (al *AgentLoop) runLLMIteration(
 			}
 			if agent.ThinkingBudget > 0 {
 				llmOpts["thinking_budget"] = agent.ThinkingBudget
+				llmOpts["reasoning"] = true
 			}
 			if agent.ContextWindow > 0 && agent.ContextWindow != agent.MaxTokens {
 				llmOpts["context_window"] = agent.ContextWindow
@@ -852,7 +860,7 @@ func (al *AgentLoop) runLLMIteration(
 					"iteration": iteration,
 					"error":     err.Error(),
 				})
-			return "", iteration, fmt.Errorf("LLM call failed after retries: %w", err)
+			return providers.Message{}, iteration, fmt.Errorf("LLM call failed after retries: %w", err)
 		}
 
 		if response.Usage != nil {
@@ -892,8 +900,7 @@ func (al *AgentLoop) runLLMIteration(
 				logger.InfoCF("agent", "Recovered XML tool calls using fallback parser",
 					map[string]any{"count": len(parsedXMLCalls)})
 			} else {
-				finalContent = response.Content
-				if finalContent == "" {
+				if response.Content == "" {
 					logger.WarnCF("agent", "LLM returned empty response with no tool calls, retrying",
 						map[string]any{
 							"agent_id":  agent.ID,
@@ -910,17 +917,24 @@ func (al *AgentLoop) runLLMIteration(
 					continue
 				}
 
+				finalMsg = providers.Message{
+					Role:             "assistant",
+					Content:          response.Content,
+					ReasoningContent: response.ReasoningContent,
+					ReasoningDetails: response.ReasoningDetails,
+				}
+
 				// Clean up any system notes from the final content if the LLM echoed them
-				finalContent = strings.TrimPrefix(finalContent, "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]\n\n")
-				finalContent = strings.TrimPrefix(finalContent, "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]\n")
-				finalContent = strings.TrimPrefix(finalContent, "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]")
-				finalContent = strings.TrimSpace(finalContent)
+				finalMsg.Content = strings.TrimPrefix(finalMsg.Content, "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]\n\n")
+				finalMsg.Content = strings.TrimPrefix(finalMsg.Content, "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]\n")
+				finalMsg.Content = strings.TrimPrefix(finalMsg.Content, "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]")
+				finalMsg.Content = strings.TrimSpace(finalMsg.Content)
 
 				logger.InfoCF("agent", "LLM response without tool calls (direct answer)",
 					map[string]any{
 						"agent_id":      agent.ID,
 						"iteration":     iteration,
-						"content_chars": len(finalContent),
+						"content_chars": len(finalMsg.Content),
 					})
 				break
 			}
@@ -949,6 +963,7 @@ func (al *AgentLoop) runLLMIteration(
 			Role:             "assistant",
 			Content:          response.Content,
 			ReasoningContent: response.ReasoningContent,
+			ReasoningDetails: response.ReasoningDetails,
 		}
 		for _, tc := range normalizedToolCalls {
 			argumentsJSON, _ := json.Marshal(tc.Arguments)
@@ -1045,7 +1060,7 @@ func (al *AgentLoop) runLLMIteration(
 		}
 	}
 
-	return finalContent, iteration, nil
+	return finalMsg, iteration, nil
 }
 
 // updateToolContexts updates the context for tools that need channel/chatID info.

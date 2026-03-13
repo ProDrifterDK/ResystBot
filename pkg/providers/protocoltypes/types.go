@@ -27,6 +27,7 @@ type FunctionCall struct {
 type LLMResponse struct {
 	Content          string     `json:"content"`
 	ReasoningContent string     `json:"reasoning_content,omitempty"`
+	ReasoningDetails any        `json:"reasoning_details,omitempty"`
 	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
 	FinishReason     string     `json:"finish_reason"`
 	Usage            *UsageInfo `json:"usage,omitempty"`
@@ -42,6 +43,7 @@ type Message struct {
 	Role             string     `json:"role"`
 	Content          string     `json:"content"`
 	ReasoningContent string     `json:"reasoning_content,omitempty"`
+	ReasoningDetails any        `json:"reasoning_details,omitempty"`
 	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID       string     `json:"tool_call_id,omitempty"`
 }

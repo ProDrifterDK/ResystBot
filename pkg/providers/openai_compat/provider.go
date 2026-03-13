@@ -128,6 +128,16 @@ func (p *Provider) Chat(
 		}
 	}
 
+	// Support for OpenRouter Hunter-Alpha and other models requiring explicit reasoning enable
+	// Also can be used for deepseek/o1 if we want to explicitly enable reasoning in extra_body
+	if _, ok := options["reasoning"]; ok {
+		requestBody["extra_body"] = map[string]any{
+			"reasoning": map[string]any{
+				"enabled": true,
+			},
+		}
+	}
+
 	jsonData, err := json.Marshal(requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
@@ -167,6 +177,7 @@ func parseResponse(body []byte) (*LLMResponse, error) {
 			Message struct {
 				Content          string `json:"content"`
 				ReasoningContent string `json:"reasoning_content"`
+				ReasoningDetails any    `json:"reasoning_details"`
 				ToolCalls        []struct {
 					ID       string `json:"id"`
 					Type     string `json:"type"`
@@ -241,6 +252,7 @@ func parseResponse(body []byte) (*LLMResponse, error) {
 	return &LLMResponse{
 		Content:          choice.Message.Content,
 		ReasoningContent: choice.Message.ReasoningContent,
+		ReasoningDetails: choice.Message.ReasoningDetails,
 		ToolCalls:        toolCalls,
 		FinishReason:     choice.FinishReason,
 		Usage:            apiResponse.Usage,

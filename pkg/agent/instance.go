@@ -130,7 +130,7 @@ func NewAgentInstance(
 		contextWindow = agentCfg.ContextWindow
 	}
 
-	thinkingBudget := 0
+	thinkingBudget := defaults.ThinkingBudget
 	if agentCfg != nil && agentCfg.ThinkingBudget > 0 {
 		thinkingBudget = agentCfg.ThinkingBudget
 	}

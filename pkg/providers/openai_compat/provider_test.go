@@ -325,3 +325,59 @@ func TestNormalizeModel_UsesAPIBase(t *testing.T) {
 		t.Fatalf("normalizeModel(openrouter) = %q, want %q", got, "openrouter/auto")
 	}
 }
+func TestProviderChat_HunterAlpha(t *testing.T) {
+	var requestBody map[string]any
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		resp := map[string]any{
+			"choices": []map[string]any{
+				{
+					"message": map[string]any{
+						"content":           "42",
+						"reasoning_content": "Calculating...",
+						"reasoning_details": map[string]any{"step": 1},
+					},
+					"finish_reason": "stop",
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	p := NewProvider("key", server.URL, "")
+	out, err := p.Chat(
+		t.Context(),
+		[]Message{{Role: "user", Content: "Everything?"}},
+		nil,
+		"openrouter/hunter-alpha",
+		map[string]any{"reasoning": true},
+	)
+	if err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+
+	// Verify reasoning is enabled in request
+	extraBody, ok := requestBody["extra_body"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected extra_body in request")
+	}
+	reasoning, ok := extraBody["reasoning"].(map[string]any)
+	if !ok || reasoning["enabled"] != true {
+		t.Fatalf("expected reasoning enabled in extra_body")
+	}
+
+	// Verify reasoning_details in response
+	if out.ReasoningDetails == nil {
+		t.Fatalf("expected ReasoningDetails in response")
+	}
+	details := out.ReasoningDetails.(map[string]any)
+	if details["step"] != float64(1) {
+		t.Fatalf("ReasoningDetails[step] = %v, want 1", details["step"])
+	}
+}
