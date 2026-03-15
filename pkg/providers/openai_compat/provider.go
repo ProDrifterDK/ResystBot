@@ -209,52 +209,68 @@ func parseResponse(body []byte) (*LLMResponse, error) {
 	}
 
 	choice := apiResponse.Choices[0]
+	content := choice.Message.Content
 	toolCalls := make([]ToolCall, 0, len(choice.Message.ToolCalls))
-	for _, tc := range choice.Message.ToolCalls {
-		arguments := make(map[string]any)
-		name := ""
 
-		// Extract thought_signature from Gemini/Google-specific extra content
-		thoughtSignature := ""
-		if tc.ExtraContent != nil && tc.ExtraContent.Google != nil {
-			thoughtSignature = tc.ExtraContent.Google.ThoughtSignature
-		}
+	if len(choice.Message.ToolCalls) > 0 {
+		for _, tc := range choice.Message.ToolCalls {
+			arguments := make(map[string]any)
+			name := ""
 
-		if tc.Function != nil {
-			name = tc.Function.Name
-			if tc.Function.Arguments != "" {
-				if err := json.Unmarshal([]byte(tc.Function.Arguments), &arguments); err != nil {
-					log.Printf("openai_compat: failed to decode tool call arguments for %q: %v", name, err)
-					arguments["raw"] = tc.Function.Arguments
+			// Extract thought_signature from Gemini/Google-specific extra content
+			thoughtSignature := ""
+			if tc.ExtraContent != nil && tc.ExtraContent.Google != nil {
+				thoughtSignature = tc.ExtraContent.Google.ThoughtSignature
+			}
+
+			if tc.Function != nil {
+				name = tc.Function.Name
+				if tc.Function.Arguments != "" {
+					if err := json.Unmarshal([]byte(tc.Function.Arguments), &arguments); err != nil {
+						log.Printf("openai_compat: failed to decode tool call arguments for %q: %v", name, err)
+						arguments["raw"] = tc.Function.Arguments
+					}
 				}
 			}
-		}
 
-		// Build ToolCall with ExtraContent for Gemini 3 thought_signature persistence
-		toolCall := ToolCall{
-			ID:               tc.ID,
-			Name:             name,
-			Arguments:        arguments,
-			ThoughtSignature: thoughtSignature,
-		}
-
-		if thoughtSignature != "" {
-			toolCall.ExtraContent = &ExtraContent{
-				Google: &GoogleExtra{
-					ThoughtSignature: thoughtSignature,
-				},
+			// Build ToolCall with ExtraContent for Gemini 3 thought_signature persistence
+			toolCall := ToolCall{
+				ID:               tc.ID,
+				Name:             name,
+				Arguments:        arguments,
+				ThoughtSignature: thoughtSignature,
 			}
-		}
 
-		toolCalls = append(toolCalls, toolCall)
+			if thoughtSignature != "" {
+				toolCall.ExtraContent = &ExtraContent{
+					Google: &GoogleExtra{
+						ThoughtSignature: thoughtSignature,
+					},
+				}
+			}
+
+			toolCalls = append(toolCalls, toolCall)
+		}
+	} else if content != "" {
+		// Attempt to extract XML tool calls from content if no native tool calls are present
+		xmlCalls := protocoltypes.ExtractXMLToolCalls(content)
+		if len(xmlCalls) > 0 {
+			toolCalls = append(toolCalls, xmlCalls...)
+			content = protocoltypes.StripToolCallsFromText(content)
+		}
+	}
+
+	finishReason := choice.FinishReason
+	if len(toolCalls) > 0 && finishReason == "stop" {
+		finishReason = "tool_calls"
 	}
 
 	return &LLMResponse{
-		Content:          choice.Message.Content,
+		Content:          content,
 		ReasoningContent: choice.Message.ReasoningContent,
 		ReasoningDetails: choice.Message.ReasoningDetails,
 		ToolCalls:        toolCalls,
-		FinishReason:     choice.FinishReason,
+		FinishReason:     finishReason,
 		Usage:            apiResponse.Usage,
 	}, nil
 }

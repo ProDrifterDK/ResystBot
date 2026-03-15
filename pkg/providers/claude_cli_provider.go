@@ -177,29 +177,15 @@ func (p *ClaudeCliProvider) parseClaudeCliResponse(output string) (*LLMResponse,
 
 // extractToolCalls delegates to the shared extractToolCallsFromText function.
 func (p *ClaudeCliProvider) extractToolCalls(text string) []ToolCall {
-	return extractToolCallsFromText(text)
+	return ExtractToolCallsFromText(text)
 }
 
 // stripToolCallsJSON delegates to the shared stripToolCallsFromText function.
 func (p *ClaudeCliProvider) stripToolCallsJSON(text string) string {
-	return stripToolCallsFromText(text)
+	return StripToolCallsFromText(text)
 }
 
-// findMatchingBrace finds the index after the closing brace matching the opening brace at pos.
-func findMatchingBrace(text string, pos int) int {
-	depth := 0
-	for i := pos; i < len(text); i++ {
-		if text[i] == '{' {
-			depth++
-		} else if text[i] == '}' {
-			depth--
-			if depth == 0 {
-				return i + 1
-			}
-		}
-	}
-	return pos
-}
+// Note: FindMatchingBrace is used from tool_call_extract.go
 
 // claudeCliJSONResponse represents the JSON output from the claude CLI.
 // Matches the real claude CLI v2.x output format.

@@ -1,72 +1,25 @@
 package providers
 
 import (
-	"encoding/json"
-	"strings"
+	"github.com/sipeed/picoclaw/pkg/providers/protocoltypes"
 )
 
-// extractToolCallsFromText parses tool call JSON from response text.
-// Both ClaudeCliProvider and CodexCliProvider use this to extract
-// tool calls that the model outputs in its response text.
-func extractToolCallsFromText(text string) []ToolCall {
-	start := strings.Index(text, `{"tool_calls"`)
-	if start == -1 {
-		return nil
-	}
-
-	end := findMatchingBrace(text, start)
-	if end == start {
-		return nil
-	}
-
-	jsonStr := text[start:end]
-
-	var wrapper struct {
-		ToolCalls []struct {
-			ID       string `json:"id"`
-			Type     string `json:"type"`
-			Function struct {
-				Name      string `json:"name"`
-				Arguments string `json:"arguments"`
-			} `json:"function"`
-		} `json:"tool_calls"`
-	}
-
-	if err := json.Unmarshal([]byte(jsonStr), &wrapper); err != nil {
-		return nil
-	}
-
-	var result []ToolCall
-	for _, tc := range wrapper.ToolCalls {
-		var args map[string]any
-		json.Unmarshal([]byte(tc.Function.Arguments), &args)
-
-		result = append(result, ToolCall{
-			ID:        tc.ID,
-			Type:      tc.Type,
-			Name:      tc.Function.Name,
-			Arguments: args,
-			Function: &FunctionCall{
-				Name:      tc.Function.Name,
-				Arguments: tc.Function.Arguments,
-			},
-		})
-	}
-
-	return result
+// ExtractToolCallsFromText parses tool call JSON from response text.
+func ExtractToolCallsFromText(text string) []ToolCall {
+	return protocoltypes.ExtractToolCallsFromText(text)
 }
 
-// stripToolCallsFromText removes tool call JSON from response text.
-func stripToolCallsFromText(text string) string {
-	start := strings.Index(text, `{"tool_calls"`)
-	if start == -1 {
-		return text
-	}
+// ExtractXMLToolCalls parses tool calls found within <tool_call> tags.
+func ExtractXMLToolCalls(text string) []ToolCall {
+	return protocoltypes.ExtractXMLToolCalls(text)
+}
 
-	end := findMatchingBrace(text, start)
-	if end == start {
-		return text
-	}
+// StripToolCallsFromText removes tool call JSON and XML from response text.
+func StripToolCallsFromText(text string) string {
+	return protocoltypes.StripToolCallsFromText(text)
+}
 
-	return strings.TrimSpace(text[:start] + text[end:])
+// FindMatchingBrace finds the index after the closing brace matching the opening brace at pos.
+func FindMatchingBrace(text string, pos int) int {
+	return protocoltypes.FindMatchingBrace(text, pos)
 }
