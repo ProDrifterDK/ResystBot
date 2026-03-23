@@ -23,6 +23,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/routing"
+	"github.com/sipeed/picoclaw/pkg/session"
 	"github.com/sipeed/picoclaw/pkg/skills"
 	"github.com/sipeed/picoclaw/pkg/state"
 	"github.com/sipeed/picoclaw/pkg/tools"
@@ -617,7 +618,7 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, agent *AgentInstance, opt
 	var history []providers.Message
 	var summary string
 	if !opts.NoHistory {
-		history = agent.Sessions.GetHistory(opts.SessionKey)
+		history = session.CompressForLLM(agent.Sessions.GetHistory(opts.SessionKey))
 		summary = agent.Sessions.GetSummary(opts.SessionKey)
 	}
 	messages := agent.ContextBuilder.BuildMessages(
@@ -811,7 +812,7 @@ func (al *AgentLoop) runLLMIteration(
 				})
 				messages = sanitizeMessageHistory(messages)
 				al.forceCompression(agent, opts.SessionKey)
-				newHistory := agent.Sessions.GetHistory(opts.SessionKey)
+				newHistory := session.CompressForLLM(agent.Sessions.GetHistory(opts.SessionKey))
 				newSummary := agent.Sessions.GetSummary(opts.SessionKey)
 				messages = agent.ContextBuilder.BuildMessages(
 					newHistory, newSummary, "",
@@ -834,7 +835,7 @@ func (al *AgentLoop) runLLMIteration(
 				}
 
 				al.forceCompression(agent, opts.SessionKey)
-				newHistory := agent.Sessions.GetHistory(opts.SessionKey)
+				newHistory := session.CompressForLLM(agent.Sessions.GetHistory(opts.SessionKey))
 				newSummary := agent.Sessions.GetSummary(opts.SessionKey)
 				messages = agent.ContextBuilder.BuildMessages(
 					newHistory, newSummary, "",
@@ -1087,7 +1088,7 @@ func (al *AgentLoop) updateToolContexts(agent *AgentInstance, channel, chatID st
 func (al *AgentLoop) maybeSummarize(agent *AgentInstance, sessionKey, channel, chatID string) {
 	newHistory := agent.Sessions.GetHistory(sessionKey)
 	tokenEstimate := al.estimateTokens(newHistory)
-	threshold := agent.ContextWindow * 75 / 100
+	threshold := agent.ContextWindow * 60 / 100
 
 	if tokenEstimate > threshold {
 		summarizeKey := agent.ID + ":" + sessionKey
