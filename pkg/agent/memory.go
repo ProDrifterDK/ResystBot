@@ -122,30 +122,42 @@ func (ms *MemoryStore) GetRecentDailyNotes(days int) string {
 	return sb.String()
 }
 
-// GetMemoryContext returns formatted memory context for the agent prompt.
-// Includes long-term memory and recent daily notes.
-func (ms *MemoryStore) GetMemoryContext() string {
-	longTerm := ms.ReadLongTerm()
-	recentNotes := ms.GetRecentDailyNotes(3)
-
-	if longTerm == "" && recentNotes == "" {
-		return ""
-	}
+// GetMemoryIndex returns a compact index of available memory files (~500 tokens)
+// instead of full contents, to reduce token usage in the system prompt.
+func (ms *MemoryStore) GetMemoryIndex() string {
+	memoryMd := ms.ReadLongTerm()
 
 	var sb strings.Builder
+	sb.WriteString("## Available Memory\nUse the recall_memory tool to read any file when you need its contents.\n\n")
 
-	if longTerm != "" {
-		sb.WriteString("## Long-term Memory\n\n")
-		sb.WriteString(longTerm)
+	if memoryMd != "" {
+		sb.WriteString(memoryMd)
+	} else {
+		sb.WriteString("No memory files found.\n")
 	}
 
-	if recentNotes != "" {
-		if longTerm != "" {
-			sb.WriteString("\n\n---\n\n")
+	dailyNotes := ms.listRecentDailyNotes(7)
+	if len(dailyNotes) > 0 {
+		sb.WriteString("\n### Daily Notes\n")
+		for _, note := range dailyNotes {
+			sb.WriteString(fmt.Sprintf("- %s\n", note))
 		}
-		sb.WriteString("## Recent Daily Notes\n\n")
-		sb.WriteString(recentNotes)
 	}
 
 	return sb.String()
+}
+
+func (ms *MemoryStore) listRecentDailyNotes(days int) []string {
+	var notes []string
+	for i := 0; i < days; i++ {
+		date := time.Now().AddDate(0, 0, -i)
+		dateStr := date.Format("20060102")
+		monthDir := dateStr[:6]
+		relPath := filepath.Join(monthDir, dateStr+".md")
+		fullPath := filepath.Join(ms.memoryDir, relPath)
+		if _, err := os.Stat(fullPath); err == nil {
+			notes = append(notes, relPath)
+		}
+	}
+	return notes
 }
