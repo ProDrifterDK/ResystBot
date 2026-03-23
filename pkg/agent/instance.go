@@ -60,6 +60,7 @@ func NewAgentInstance(
 	toolsRegistry.Register(tools.NewExecToolWithConfig(workspace, restrict, cfg))
 	toolsRegistry.Register(tools.NewEditFileTool(workspace, restrict))
 	toolsRegistry.Register(tools.NewAppendFileTool(workspace, restrict))
+	toolsRegistry.Register(tools.NewRecallMemoryTool(workspace))
 
 	// MCP tool initialization — skipped silently if no servers are configured
 	var mcpManager *mcp.Manager
