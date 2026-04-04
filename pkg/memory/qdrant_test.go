@@ -440,3 +440,87 @@ func TestQdrantClient_SearchError(t *testing.T) {
 		t.Fatal("expected error on 500 response")
 	}
 }
+
+func TestQdrantClient_Scroll(t *testing.T) {
+	page := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/collections/test/points/scroll" && r.Method == "POST" {
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+
+			if page == 0 {
+				page++
+				w.WriteHeader(200)
+				json.NewEncoder(w).Encode(map[string]any{
+					"result": map[string]any{
+						"points": []map[string]any{
+							{
+								"id":      "point-1",
+								"vector":  []float64{0.1, 0.2},
+								"payload": map[string]any{"text": "hello", "source": "test.md", "source_type": "memory_file", "chunk_type": "section", "importance": 5, "access_count": 0, "created_at": "2026-01-01T00:00:00Z", "last_accessed": "2026-01-01T00:00:00Z", "tags": []string{}},
+							},
+						},
+						"next_page_offset": "point-1",
+					},
+				})
+			} else {
+				w.WriteHeader(200)
+				json.NewEncoder(w).Encode(map[string]any{
+					"result": map[string]any{
+						"points":           []map[string]any{},
+						"next_page_offset": nil,
+					},
+				})
+			}
+			return
+		}
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+
+	client := NewQdrantClient(server.URL, "test")
+	points, nextOffset, err := client.Scroll(context.Background(), 100, nil, true)
+	if err != nil {
+		t.Fatalf("Scroll failed: %v", err)
+	}
+	if len(points) != 1 {
+		t.Fatalf("expected 1 point, got %d", len(points))
+	}
+	if points[0].ID != "point-1" {
+		t.Errorf("expected point-1, got %s", points[0].ID)
+	}
+	if points[0].Payload.Text != "hello" {
+		t.Errorf("expected hello, got %s", points[0].Payload.Text)
+	}
+	if nextOffset == nil {
+		t.Fatal("expected non-nil next offset")
+	}
+	if *nextOffset != "point-1" {
+		t.Errorf("expected point-1 offset, got %s", *nextOffset)
+	}
+}
+
+func TestQdrantClient_DeleteByIDs(t *testing.T) {
+	var receivedIDs []any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/collections/test/points/delete" && r.Method == "POST" {
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			receivedIDs = body["points"].([]any)
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+			return
+		}
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+
+	client := NewQdrantClient(server.URL, "test")
+	err := client.DeleteByIDs(context.Background(), []string{"id-1", "id-2"})
+	if err != nil {
+		t.Fatalf("DeleteByIDs failed: %v", err)
+	}
+	if len(receivedIDs) != 2 {
+		t.Fatalf("expected 2 IDs sent, got %d", len(receivedIDs))
+	}
+}

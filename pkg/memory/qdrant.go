@@ -289,6 +289,95 @@ func (q *QdrantClient) DeleteBySource(ctx context.Context, source string) error 
 	return nil
 }
 
+// ScrollPoint represents a point returned by the scroll API, including its vector.
+type ScrollPoint struct {
+	ID      string        `json:"id"`
+	Vector  []float64     `json:"vector"`
+	Payload QdrantPayload `json:"payload"`
+}
+
+// Scroll fetches points from the collection with pagination.
+// Returns points, next page offset (nil if no more pages), and error.
+func (q *QdrantClient) Scroll(ctx context.Context, limit int, offset *string, withVectors bool) ([]ScrollPoint, *string, error) {
+	url := fmt.Sprintf("%s/collections/%s/points/scroll", q.baseURL, q.collection)
+
+	body := map[string]any{
+		"limit":        limit,
+		"with_payload": true,
+		"with_vectors": withVectors,
+	}
+	if offset != nil {
+		body["offset"] = *offset
+	}
+
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return nil, nil, fmt.Errorf("marshal scroll request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBody))
+	if err != nil {
+		return nil, nil, fmt.Errorf("create scroll request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := q.client.Do(req)
+	if err != nil {
+		return nil, nil, fmt.Errorf("scroll request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, nil, fmt.Errorf("scroll returned %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Result struct {
+			Points         []ScrollPoint `json:"points"`
+			NextPageOffset *string       `json:"next_page_offset"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, nil, fmt.Errorf("decode scroll response: %w", err)
+	}
+
+	return result.Result.Points, result.Result.NextPageOffset, nil
+}
+
+// DeleteByIDs deletes points by their IDs.
+func (q *QdrantClient) DeleteByIDs(ctx context.Context, ids []string) error {
+	url := fmt.Sprintf("%s/collections/%s/points/delete", q.baseURL, q.collection)
+
+	body := map[string]any{
+		"points": ids,
+	}
+
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("marshal delete request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBody))
+	if err != nil {
+		return fmt.Errorf("create delete request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := q.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("delete request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("delete returned %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
+}
+
 // putJSON sends a PUT request with a JSON body, returning an error on
 // non-2xx status codes.
 func (q *QdrantClient) putJSON(ctx context.Context, url string, body any) error {
