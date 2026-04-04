@@ -638,6 +638,7 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, agent *AgentInstance, opt
 		summary = agent.Sessions.GetSummary(opts.SessionKey)
 	}
 	messages := agent.ContextBuilder.BuildMessages(
+		ctx,
 		history,
 		summary,
 		opts.UserMessage,
@@ -831,7 +832,7 @@ func (al *AgentLoop) runLLMIteration(
 				newHistory := session.CompressForLLM(agent.Sessions.GetHistory(opts.SessionKey))
 				newSummary := agent.Sessions.GetSummary(opts.SessionKey)
 				messages = agent.ContextBuilder.BuildMessages(
-					newHistory, newSummary, "",
+					ctx, newHistory, newSummary, "",
 					nil, opts.Channel, opts.ChatID,
 				)
 				messages = sanitizeMessageHistory(messages)
@@ -854,7 +855,7 @@ func (al *AgentLoop) runLLMIteration(
 				newHistory := session.CompressForLLM(agent.Sessions.GetHistory(opts.SessionKey))
 				newSummary := agent.Sessions.GetSummary(opts.SessionKey)
 				messages = agent.ContextBuilder.BuildMessages(
-					newHistory, newSummary, "",
+					ctx, newHistory, newSummary, "",
 					nil, opts.Channel, opts.ChatID,
 				)
 				messages = sanitizeMessageHistory(messages)

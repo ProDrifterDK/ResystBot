@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/memory"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/skills"
 	"github.com/sipeed/picoclaw/pkg/tools"
@@ -18,7 +20,8 @@ type ContextBuilder struct {
 	workspace    string
 	skillsLoader *skills.SkillsLoader
 	memory       *MemoryStore
-	tools        *tools.ToolRegistry // Direct reference to tool registry
+	tools        *tools.ToolRegistry    // Direct reference to tool registry
+	retriever    memory.MemoryRetriever // nil = use fallback
 }
 
 func getGlobalConfigDir() string {
@@ -46,6 +49,12 @@ func NewContextBuilder(workspace string) *ContextBuilder {
 // SetToolsRegistry sets the tools registry for dynamic tool summary generation.
 func (cb *ContextBuilder) SetToolsRegistry(registry *tools.ToolRegistry) {
 	cb.tools = registry
+}
+
+// SetRetriever sets the memory retriever for auto-injection of relevant memories.
+// When nil, BuildMessages falls back to the static memory index.
+func (cb *ContextBuilder) SetRetriever(r memory.MemoryRetriever) {
+	cb.retriever = r
 }
 
 func (cb *ContextBuilder) getIdentity() string {
@@ -130,10 +139,12 @@ The following skills extend your capabilities. To use a skill, read its SKILL.md
 %s`, skillsSummary))
 	}
 
-	// Memory context
-	memoryContext := cb.memory.GetMemoryIndex()
-	if memoryContext != "" {
-		parts = append(parts, "# Memory\n\n"+memoryContext)
+	// Memory context — when retriever is available, auto-injection happens in BuildMessages instead
+	if cb.retriever == nil {
+		memoryContext := cb.memory.GetMemoryIndex()
+		if memoryContext != "" {
+			parts = append(parts, "# Memory\n\n"+memoryContext)
+		}
 	}
 
 	// Join with "---" separator
@@ -160,6 +171,7 @@ func (cb *ContextBuilder) LoadBootstrapFiles() string {
 }
 
 func (cb *ContextBuilder) BuildMessages(
+	ctx context.Context,
 	history []providers.Message,
 	summary string,
 	currentMessage string,
@@ -169,6 +181,34 @@ func (cb *ContextBuilder) BuildMessages(
 	messages := []providers.Message{}
 
 	systemPrompt := cb.BuildSystemPrompt()
+
+	// Auto-inject relevant memories if retriever is available
+	if cb.retriever != nil && strings.TrimSpace(currentMessage) != "" {
+		retrievalCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		chunks, err := cb.retriever.Search(retrievalCtx, currentMessage, 5)
+		cancel()
+		if err != nil {
+			logger.WarnCF("agent", "Memory auto-injection failed, using fallback",
+				map[string]any{"error": err.Error()})
+			memoryContext := cb.memory.GetMemoryIndex()
+			if memoryContext != "" {
+				systemPrompt += "\n\n# Memory\n\n" + memoryContext
+			}
+		} else if len(chunks) > 0 {
+			var memSection strings.Builder
+			memSection.WriteString("\n\n# Relevant Memory\nThe following memories were retrieved based on the current conversation. Use them as context.\n\n")
+			for _, chunk := range chunks {
+				date := chunk.CreatedAt.Format("2006-01-02")
+				text := chunk.Text
+				if len(text) > 1200 {
+					text = text[:1200] + "..."
+				}
+				memSection.WriteString(fmt.Sprintf("[%s] (%s) %s\n\n", date, chunk.Source, text))
+			}
+			memSection.WriteString("Use the search_memory tool if you need information not shown above.")
+			systemPrompt += memSection.String()
+		}
+	}
 
 	// Add Current Session info if provided
 	if channel != "" && chatID != "" {
