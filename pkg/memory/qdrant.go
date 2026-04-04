@@ -125,6 +125,10 @@ func (q *QdrantClient) EnsureCollection(ctx context.Context, vectorSize int) err
 			"field_name":   "importance",
 			"field_schema": "integer",
 		},
+		{
+			"field_name":   "decay_score",
+			"field_schema": "float",
+		},
 	}
 
 	for _, idx := range indexes {
