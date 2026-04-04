@@ -12,6 +12,35 @@ import (
 	"time"
 )
 
+const defaultDelegationMD = `# PicoClaw Delegation Context
+
+You are being called by PicoClaw, a local AI agent running a small model.
+You are executing a delegated task on its behalf.
+
+## Important
+- The agent delegating to you is a small language model (9B parameters).
+  Its task descriptions reflect the user's intent but may contain
+  inaccuracies, incomplete context, or wrong assumptions.
+- Use the task as a starting point, but verify against the actual codebase
+  before acting. If something in the instructions contradicts what you see
+  in the code, trust the code.
+- If the task seems fundamentally confused or contradictory, say so in
+  your response rather than attempting something likely to be wrong.
+
+## Defaults (override if the task says otherwise)
+- Verify you are on the correct branch before making changes
+- Create a new branch for code changes unless told otherwise
+- Use your full iterative loop: understand -> plan -> implement -> test -> fix
+- Don't consider a coding task done until tests pass
+- If something is ambiguous, state what's unclear in your response
+
+## Always
+- Write a detailed report to ~/.picoclaw/workspace/claude-reports/<timestamp>-<slug>.md
+  Include: task received, approach taken, files changed, tests run, results, warnings
+- Keep your stdout summary under 500 chars: what was done, files changed, test status, warnings
+- Include branch name if you created one
+`
+
 // ClaudeCodeToolConfig holds the configuration for the Claude Code delegation tool.
 type ClaudeCodeToolConfig struct {
 	Workspace      string  // PicoClaw workspace root (e.g., ~/.picoclaw/workspace)
@@ -43,12 +72,25 @@ func NewClaudeCodeTool(cfg ClaudeCodeToolConfig) *ClaudeCodeTool {
 	reportsDir := filepath.Join(cfg.Workspace, "claude-reports")
 	delegationFile := filepath.Join(cfg.Workspace, "DELEGATION.md")
 
-	return &ClaudeCodeTool{
+	tool := &ClaudeCodeTool{
 		config:         cfg,
 		sessions:       NewSessionStore(sessionsPath),
 		reportsDir:     reportsDir,
 		delegationFile: delegationFile,
 		claudeBinary:   "claude",
+	}
+	tool.ensureDefaults()
+	return tool
+}
+
+// ensureDefaults creates DELEGATION.md and reports dir if they don't exist.
+func (t *ClaudeCodeTool) ensureDefaults() {
+	// Create reports directory
+	_ = os.MkdirAll(t.reportsDir, 0755)
+
+	// Create DELEGATION.md only if it doesn't exist
+	if _, err := os.Stat(t.delegationFile); os.IsNotExist(err) {
+		_ = os.WriteFile(t.delegationFile, []byte(defaultDelegationMD), 0644)
 	}
 }
 

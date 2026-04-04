@@ -2,6 +2,9 @@ package tools
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -150,5 +153,49 @@ func TestParseClaudeStreamJSON_Empty(t *testing.T) {
 	}
 	if !result.IsError {
 		t.Error("expected error for empty output")
+	}
+}
+
+func TestClaudeCodeTool_EnsureDelegationFile(t *testing.T) {
+	dir := t.TempDir()
+	// NewClaudeCodeTool calls ensureDefaults() internally,
+	// so the file should be created by the constructor.
+	_ = NewClaudeCodeTool(ClaudeCodeToolConfig{
+		Workspace: dir,
+	})
+
+	delegationPath := filepath.Join(dir, "DELEGATION.md")
+
+	// File should exist after construction
+	data, err := os.ReadFile(delegationPath)
+	if err != nil {
+		t.Fatalf("expected DELEGATION.md to be created: %v", err)
+	}
+
+	content := string(data)
+	if !strings.Contains(content, "PicoClaw Delegation Context") {
+		t.Error("DELEGATION.md missing expected header")
+	}
+	if !strings.Contains(content, "small language model") {
+		t.Error("DELEGATION.md missing small model warning")
+	}
+}
+
+func TestClaudeCodeTool_EnsureDelegationFile_NoOverwrite(t *testing.T) {
+	dir := t.TempDir()
+	delegationPath := filepath.Join(dir, "DELEGATION.md")
+
+	// Write a custom file first
+	os.WriteFile(delegationPath, []byte("custom rules"), 0644)
+
+	// Constructor calls ensureDefaults() — it should not overwrite
+	_ = NewClaudeCodeTool(ClaudeCodeToolConfig{
+		Workspace: dir,
+	})
+
+	// Custom file should be preserved
+	data, _ := os.ReadFile(delegationPath)
+	if string(data) != "custom rules" {
+		t.Error("ensureDefaults should not overwrite existing DELEGATION.md")
 	}
 }
