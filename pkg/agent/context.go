@@ -17,11 +17,12 @@ import (
 )
 
 type ContextBuilder struct {
-	workspace    string
-	skillsLoader *skills.SkillsLoader
-	memory       *MemoryStore
-	tools        *tools.ToolRegistry    // Direct reference to tool registry
-	retriever    memory.MemoryRetriever // nil = use fallback
+	workspace          string
+	skillsLoader       *skills.SkillsLoader
+	memory             *MemoryStore
+	tools              *tools.ToolRegistry    // Direct reference to tool registry
+	retriever          memory.MemoryRetriever // nil = use fallback
+	lastInjectedChunks []memory.MemoryChunk
 }
 
 func getGlobalConfigDir() string {
@@ -55,6 +56,11 @@ func (cb *ContextBuilder) SetToolsRegistry(registry *tools.ToolRegistry) {
 // When nil, BuildMessages falls back to the static memory index.
 func (cb *ContextBuilder) SetRetriever(r memory.MemoryRetriever) {
 	cb.retriever = r
+}
+
+// GetInjectedChunks returns the memory chunks injected in the last BuildMessages call.
+func (cb *ContextBuilder) GetInjectedChunks() []memory.MemoryChunk {
+	return cb.lastInjectedChunks
 }
 
 func (cb *ContextBuilder) getIdentity() string {
@@ -183,6 +189,7 @@ func (cb *ContextBuilder) BuildMessages(
 	systemPrompt := cb.BuildSystemPrompt()
 
 	// Auto-inject relevant memories if retriever is available
+	cb.lastInjectedChunks = nil
 	if cb.retriever != nil && strings.TrimSpace(currentMessage) != "" {
 		retrievalCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		chunks, err := cb.retriever.Search(retrievalCtx, currentMessage, 5)
@@ -195,6 +202,7 @@ func (cb *ContextBuilder) BuildMessages(
 				systemPrompt += "\n\n# Memory\n\n" + memoryContext
 			}
 		} else if len(chunks) > 0 {
+			cb.lastInjectedChunks = chunks
 			var memSection strings.Builder
 			memSection.WriteString("\n\n# Relevant Memory\nThe following memories were retrieved based on the current conversation. Use them as context.\n\n")
 			for _, chunk := range chunks {
