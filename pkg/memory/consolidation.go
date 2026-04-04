@@ -6,6 +6,12 @@ import (
 	"log"
 )
 
+// Compile-time interface compliance checks.
+var _ VectorStore = (*QdrantClient)(nil)
+var _ Embedder = (*EmbeddingClient)(nil)
+var _ LLMCompleter = (*LLMClient)(nil)
+var _ ChunkArchiver = (*ArchiveWriter)(nil)
+
 // VectorStore abstracts Qdrant operations for testability.
 type VectorStore interface {
 	Scroll(ctx context.Context, limit int, offset *string, withVectors bool) ([]ScrollPoint, *string, error)
