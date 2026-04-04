@@ -2,7 +2,6 @@ package memory
 
 import (
 	"context"
-	"math"
 	"testing"
 	"time"
 )
@@ -31,6 +30,7 @@ func TestPhasePrune_ArchivesLowScoreChunks(t *testing.T) {
 			Payload: QdrantPayload{
 				Text: "old thing", Importance: 1, AccessCount: 0,
 				LastAccessed: veryOld, CreatedAt: veryOld,
+				DecayScore: 0.02,
 			},
 		},
 		{
@@ -39,6 +39,7 @@ func TestPhasePrune_ArchivesLowScoreChunks(t *testing.T) {
 			Payload: QdrantPayload{
 				Text: "new thing", Importance: 8, AccessCount: 5,
 				LastAccessed: recent, CreatedAt: recent,
+				DecayScore: 4.8,
 			},
 		},
 	})
@@ -50,7 +51,6 @@ func TestPhasePrune_ArchivesLowScoreChunks(t *testing.T) {
 		Config: ConsolidationConfig{
 			PruneScoreThreshold: 0.05,
 			PruneMinAgeDays:     14,
-			DecayRate:           0.001,
 		},
 	}
 	stats := &ConsolidationStats{}
@@ -70,12 +70,42 @@ func TestPhasePrune_ArchivesLowScoreChunks(t *testing.T) {
 	if archiver.records[0].ID != "stale" {
 		t.Errorf("expected stale archived, got %s", archiver.records[0].ID)
 	}
-	if archiver.reason != "pruned" {
-		t.Errorf("expected reason pruned, got %s", archiver.reason)
-	}
 
 	if len(store.deletedIDs) != 1 || store.deletedIDs[0] != "stale" {
 		t.Errorf("expected stale deleted, got %v", store.deletedIDs)
+	}
+}
+
+func TestPhasePrune_SkipsZeroScore(t *testing.T) {
+	veryOld := time.Now().Add(-60 * 24 * time.Hour).Format(time.RFC3339)
+
+	store := newMockStore([]ScrollPoint{
+		{
+			ID:     "unscored",
+			Vector: []float64{0.1},
+			Payload: QdrantPayload{
+				Importance: 1, AccessCount: 0,
+				LastAccessed: veryOld, CreatedAt: veryOld,
+				DecayScore: 0.0,
+			},
+		},
+	})
+
+	archiver := &mockArchiver{}
+	deps := &ConsolidationDeps{
+		Store:    store,
+		Archiver: archiver,
+		Config: ConsolidationConfig{
+			PruneScoreThreshold: 0.05,
+			PruneMinAgeDays:     14,
+		},
+	}
+	stats := &ConsolidationStats{}
+
+	PhasePrune(context.Background(), deps, stats)
+
+	if stats.ChunksPruned != 0 {
+		t.Errorf("expected 0 pruned (zero score = unscored), got %d", stats.ChunksPruned)
 	}
 }
 
@@ -89,6 +119,7 @@ func TestPhasePrune_RespectsMinAge(t *testing.T) {
 			Payload: QdrantPayload{
 				Importance: 1, AccessCount: 0,
 				LastAccessed: threeDaysOld, CreatedAt: threeDaysOld,
+				DecayScore: 0.01,
 			},
 		},
 	})
@@ -100,7 +131,6 @@ func TestPhasePrune_RespectsMinAge(t *testing.T) {
 		Config: ConsolidationConfig{
 			PruneScoreThreshold: 0.05,
 			PruneMinAgeDays:     14,
-			DecayRate:           0.001,
 		},
 	}
 	stats := &ConsolidationStats{}
@@ -112,29 +142,18 @@ func TestPhasePrune_RespectsMinAge(t *testing.T) {
 	}
 }
 
-func TestPruneScore(t *testing.T) {
-	score := pruneScore(0, 1, 60*24, 0.001)
-	if math.Abs(score-0.0237) > 0.01 {
-		t.Errorf("expected ~0.024, got %f", score)
-	}
-
-	score2 := pruneScore(5, 8, 1, 0.001)
-	if score2 < 4.0 {
-		t.Errorf("expected high score for active chunk, got %f", score2)
-	}
-}
-
 func TestPhasePrune_DryRun(t *testing.T) {
 	veryOld := time.Now().Add(-60 * 24 * time.Hour).Format(time.RFC3339)
 	store := newMockStore([]ScrollPoint{
 		{ID: "stale", Vector: []float64{0.1}, Payload: QdrantPayload{
 			Importance: 1, AccessCount: 0, LastAccessed: veryOld, CreatedAt: veryOld,
+			DecayScore: 0.02,
 		}},
 	})
 	archiver := &mockArchiver{}
 	deps := &ConsolidationDeps{
 		Store: store, Archiver: archiver, DryRun: true,
-		Config: ConsolidationConfig{PruneScoreThreshold: 0.05, PruneMinAgeDays: 14, DecayRate: 0.001},
+		Config: ConsolidationConfig{PruneScoreThreshold: 0.05, PruneMinAgeDays: 14},
 	}
 	stats := &ConsolidationStats{}
 

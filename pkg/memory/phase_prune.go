@@ -4,19 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math"
 	"time"
 )
 
-// pruneScore computes the decay score for a memory chunk.
-// score = (accessCount + 1) * (importance / 10.0) * exp(-decayRate * hours)
-func pruneScore(accessCount, importance int, hoursSinceAccess float64, decayRate float64) float64 {
-	return float64(accessCount+1) * (float64(importance) / 10.0) * math.Exp(-decayRate*hoursSinceAccess)
-}
-
 // PhasePrune archives and removes low-value memories from Qdrant.
+// Reads decay_score from payload (set by PhaseScore). Chunks with
+// decay_score == 0.0 are skipped (not yet scored).
 func PhasePrune(ctx context.Context, deps *ConsolidationDeps, stats *ConsolidationStats) error {
-	points, err := ScrollAll(ctx, deps.Store, true)
+	points, err := ScrollAll(ctx, deps.Store, true) // vectors needed for archive
 	if err != nil {
 		return err
 	}
@@ -28,6 +23,11 @@ func PhasePrune(ctx context.Context, deps *ConsolidationDeps, stats *Consolidati
 	var toPrune []ScrollPoint
 
 	for _, p := range points {
+		// Skip chunks not yet scored (first deployment guard)
+		if p.Payload.DecayScore == 0.0 {
+			continue
+		}
+
 		createdAt, err := time.Parse(time.RFC3339, p.Payload.CreatedAt)
 		if err != nil {
 			log.Printf("[prune] skip %s: bad created_at: %v", p.ID, err)
@@ -38,17 +38,8 @@ func PhasePrune(ctx context.Context, deps *ConsolidationDeps, stats *Consolidati
 			continue
 		}
 
-		lastAccessed, err := time.Parse(time.RFC3339, p.Payload.LastAccessed)
-		if err != nil {
-			log.Printf("[prune] skip %s: bad last_accessed: %v", p.ID, err)
-			continue
-		}
-
-		hours := now.Sub(lastAccessed).Hours()
-		score := pruneScore(p.Payload.AccessCount, p.Payload.Importance, hours, deps.Config.DecayRate)
-
-		if score < deps.Config.PruneScoreThreshold {
-			log.Printf("[prune] %s: score=%.4f (threshold=%.4f)", p.ID, score, deps.Config.PruneScoreThreshold)
+		if p.Payload.DecayScore < deps.Config.PruneScoreThreshold {
+			log.Printf("[prune] %s: decay_score=%.4f (threshold=%.4f)", p.ID, p.Payload.DecayScore, deps.Config.PruneScoreThreshold)
 			toPrune = append(toPrune, p)
 		}
 	}
