@@ -280,8 +280,8 @@ func (t *ClaudeCodeTool) runClaude(ctx context.Context, cmdArgs []string, workDi
 		return
 	}
 
-	// Save session
-	if result.SessionID != "" {
+	// Save session (only on success)
+	if result.SessionID != "" && !result.IsError {
 		summary := result.Summary
 		if len(summary) > 100 {
 			summary = summary[:100]
