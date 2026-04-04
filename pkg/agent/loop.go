@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -38,8 +39,9 @@ type AgentLoop struct {
 	summarizing      sync.Map
 	fallback         *providers.FallbackChain
 	channelManager   *channels.Manager
-	subagentManagers map[string]*tools.SubagentManager
-	memoryWriter     *memory.WriteHandler
+	subagentManagers       map[string]*tools.SubagentManager
+	memoryWriter           *memory.WriteHandler
+	reconsolidationHandler *memory.ReconsolidationHandler
 }
 
 // processOptions configures how a message is processed
@@ -95,6 +97,16 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 				cfg.Memory.GetCollectionName(),
 			)
 			al.memoryWriter = memory.NewWriteHandler(embedClient, qdrantClient)
+
+			// Initialize reconsolidation handler
+			llmBaseURL := cfg.Memory.GetEmbeddingURL() // Same LM Studio server
+			llmModel := cfg.Memory.GetConsolidationLMSModelPath()
+			if llmModel == "" {
+				llmModel = cfg.Memory.GetConsolidationModel()
+			}
+			reconLLM := memory.NewLLMClient(llmBaseURL, llmModel, "lm-studio")
+			reconLogDir := filepath.Join(cfg.WorkspacePath(), "mind", "reconsolidation")
+			al.reconsolidationHandler = memory.NewReconsolidationHandler(embedClient, reconLLM, qdrantClient, reconLogDir)
 		}
 	}
 
@@ -734,6 +746,14 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, agent *AgentInstance, opt
 	// 6b. Index conversation turn in memory system (async, non-blocking)
 	if al.memoryWriter != nil && finalContent != "" && finalContent != opts.DefaultResponse {
 		al.memoryWriter.IndexConversationTurn(opts.UserMessage, finalContent, opts.ChatID)
+	}
+
+	// 6c. Reconsolidation check — update access counts and trigger rewrite if needed
+	if al.reconsolidationHandler != nil && finalContent != "" {
+		injectedChunks := agent.ContextBuilder.GetInjectedChunks()
+		if len(injectedChunks) > 0 {
+			al.reconsolidationHandler.Check(ctx, injectedChunks, finalContent)
+		}
 	}
 
 	// 7. Optional: summarization
