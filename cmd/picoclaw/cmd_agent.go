@@ -156,26 +156,31 @@ func agentCmd() {
 	// Start a goroutine to listen for outbound messages (e.g. from the message tool).
 	// Each message is flushed immediately with os.Stdout.Sync() so tg_listener.py
 	// receives it right away even when picoclaw's stdout is piped (OS pipe buffer).
-	go func() {
-		ctx := context.Background()
-		for {
-			msg, ok := msgBus.SubscribeOutbound(ctx)
-			if !ok {
-				break
+	// In daemon mode this goroutine is suppressed: daemonMode() has its own outbound
+	// listener that emits JSON-lines events instead of raw fmt.Printf, preventing
+	// protocol corruption on the daemon stdout stream.
+	if !daemon {
+		go func() {
+			ctx := context.Background()
+			for {
+				msg, ok := msgBus.SubscribeOutbound(ctx)
+				if !ok {
+					break
+				}
+				// Skip internal operational status messages — these should not be sent to the user
+				if isInternalMessage(msg.Content) {
+					logger.DebugCF("agent", "Suppressing internal status message from stdout",
+						map[string]any{"content": msg.Content})
+					continue
+				}
+				// Print the outbound message to stdout so tg_listener.py can capture it.
+				// Flush immediately so the pipe reader sees it without waiting for more data.
+				fmt.Printf("\n%s %s\n\n", logo, msg.Content)
+				os.Stdout.Sync() //nolint:errcheck
+				atomic.AddInt64(&outboundPrinted, 1)
 			}
-			// Skip internal operational status messages — these should not be sent to the user
-			if isInternalMessage(msg.Content) {
-				logger.DebugCF("agent", "Suppressing internal status message from stdout",
-					map[string]any{"content": msg.Content})
-				continue
-			}
-			// Print the outbound message to stdout so tg_listener.py can capture it.
-			// Flush immediately so the pipe reader sees it without waiting for more data.
-			fmt.Printf("\n%s %s\n\n", logo, msg.Content)
-			os.Stdout.Sync() //nolint:errcheck
-			atomic.AddInt64(&outboundPrinted, 1)
-		}
-	}()
+		}()
+	}
 
 	// Print agent startup info (only for interactive mode)
 	startupInfo := agentLoop.GetStartupInfo()
