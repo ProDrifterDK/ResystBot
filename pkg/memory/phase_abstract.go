@@ -70,7 +70,7 @@ func buildClusters(points []ScrollPoint, threshold float64) [][]ScrollPoint {
 
 // PhaseAbstract clusters similar memory chunks and merges them into summaries.
 func PhaseAbstract(ctx context.Context, deps *ConsolidationDeps, stats *ConsolidationStats) error {
-	points, _, err := deps.Store.Scroll(ctx, 1000, nil, true)
+	points, err := ScrollAll(ctx, deps.Store, true)
 	if err != nil {
 		return err
 	}
@@ -151,6 +151,7 @@ func PhaseAbstract(ctx context.Context, deps *ConsolidationDeps, stats *Consolid
 				CreatedAt:    now,
 				LastAccessed: now,
 				Tags:         tags,
+				MergedFrom:   mergedIDs,
 			},
 		}
 

@@ -87,6 +87,24 @@ func FilterPhases(phases []NamedPhase, name string) []NamedPhase {
 	return filtered
 }
 
+// ScrollAll fetches all points from the vector store using pagination.
+func ScrollAll(ctx context.Context, store VectorStore, withVectors bool) ([]ScrollPoint, error) {
+	var all []ScrollPoint
+	var offset *string
+	for {
+		points, nextOffset, err := store.Scroll(ctx, 100, offset, withVectors)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, points...)
+		if nextOffset == nil || len(points) == 0 {
+			break
+		}
+		offset = nextOffset
+	}
+	return all, nil
+}
+
 // RunConsolidation executes phases sequentially. Phase errors are logged
 // and recorded in stats but do not abort the pipeline.
 func RunConsolidation(ctx context.Context, deps *ConsolidationDeps, phases ...NamedPhase) (*ConsolidationStats, error) {

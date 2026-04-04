@@ -56,6 +56,7 @@ type QdrantPayload struct {
 	CreatedAt   string   `json:"created_at"`
 	LastAccessed string  `json:"last_accessed"`
 	Tags        []string `json:"tags"`
+	MergedFrom  []string `json:"merged_from,omitempty"`
 }
 
 // Keyword lists for importance scoring

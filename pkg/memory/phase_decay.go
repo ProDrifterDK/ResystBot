@@ -9,7 +9,7 @@ import (
 // PhaseDecay reduces importance of memories not accessed in over 14 days.
 // Importance is decremented by 1, floored at 1.
 func PhaseDecay(ctx context.Context, deps *ConsolidationDeps, stats *ConsolidationStats) error {
-	points, _, err := deps.Store.Scroll(ctx, 1000, nil, false)
+	points, err := ScrollAll(ctx, deps.Store, false)
 	if err != nil {
 		return err
 	}

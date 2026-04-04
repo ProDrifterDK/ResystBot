@@ -13,7 +13,7 @@ import (
 
 // PhaseReflect generates higher-order insights from top memories.
 func PhaseReflect(ctx context.Context, deps *ConsolidationDeps, stats *ConsolidationStats) error {
-	points, _, err := deps.Store.Scroll(ctx, 1000, nil, false)
+	points, err := ScrollAll(ctx, deps.Store, false)
 	if err != nil {
 		return err
 	}

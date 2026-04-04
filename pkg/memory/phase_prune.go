@@ -16,7 +16,7 @@ func pruneScore(accessCount, importance int, hoursSinceAccess float64, decayRate
 
 // PhasePrune archives and removes low-value memories from Qdrant.
 func PhasePrune(ctx context.Context, deps *ConsolidationDeps, stats *ConsolidationStats) error {
-	points, _, err := deps.Store.Scroll(ctx, 1000, nil, true)
+	points, err := ScrollAll(ctx, deps.Store, true)
 	if err != nil {
 		return err
 	}
@@ -53,7 +53,12 @@ func PhasePrune(ctx context.Context, deps *ConsolidationDeps, stats *Consolidati
 		}
 	}
 
-	if len(toPrune) == 0 || deps.DryRun {
+	if len(toPrune) == 0 {
+		return nil
+	}
+
+	if deps.DryRun {
+		stats.ChunksPruned = len(toPrune)
 		return nil
 	}
 

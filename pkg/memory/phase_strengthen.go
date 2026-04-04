@@ -8,7 +8,7 @@ import (
 // PhaseStrengthen boosts importance of frequently accessed memories.
 // Chunks with access_count >= 3 get importance +1, capped at 10.
 func PhaseStrengthen(ctx context.Context, deps *ConsolidationDeps, stats *ConsolidationStats) error {
-	points, _, err := deps.Store.Scroll(ctx, 1000, nil, false)
+	points, err := ScrollAll(ctx, deps.Store, false)
 	if err != nil {
 		return err
 	}
