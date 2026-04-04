@@ -62,6 +62,8 @@ qdrant:
 
 **Why Qdrant:** Native hybrid search (dense vectors + BM25 in one query), payload filtering (timestamp, importance, source_type), official Go SDK, production-proven. The research showed hybrid retrieval pushes recall from ~0.72 to ~0.91.
 
+**Hybrid search mechanism:** Qdrant's built-in full-text index on the `text` payload field provides BM25 scoring. This is configured at collection creation time (not via sparse vectors). The query API's `prefetch` + `fusion: rrf` combines dense vector results with full-text results using Reciprocal Rank Fusion. No application-side BM25 implementation needed.
+
 ### LM Studio Server (systemd service)
 
 Keeps `nomic-embed-text-v1.5` always available for embedding. Chat models are loaded/unloaded independently via the UI.
@@ -155,13 +157,13 @@ Reads files from `memory/` and `mind/`, chunks by content type, embeds, upserts 
 
 ### Content-Type-Aware Chunking
 
-| Source | Chunk strategy | Example |
-|--------|---------------|---------|
-| `memory/*.md` with headings | Split by `##` heading → one chunk per section | decisions_log.md → 15 sections |
-| `memory/YYYYMM/*.md` daily notes | Split by timestamped entry or `---` separator | 20260403.md → 5 entries |
-| `mind/night_research/*.md` | Split by paragraph groups, ~512 tokens max | essay.md → 8 paragraphs |
-| `mind/*.md` (project docs) | Split by `##` heading → one chunk per section | mev_architecture.md → 6 sections |
-| Conversation turns | Each user+assistant exchange = one chunk, max 512 tokens | "What about X?" → "Here's..." |
+| Filesystem path | Chunk strategy | source_type | chunk_type | Example |
+|-----------------|---------------|-------------|------------|---------|
+| `memory/*.md` (non-daily) | Split by `##` heading | `memory_file` | `section` | decisions_log.md → 15 sections |
+| `memory/YYYYMM/*.md` | Split by timestamped entry or `---` | `daily_note` | `entry` | 20260403.md → 5 entries |
+| `mind/night_research/*.md` | Split by paragraph groups, ~512 tokens | `mind_doc` | `paragraph` | essay.md → 8 paragraphs |
+| `mind/*.md` (other docs) | Split by `##` heading | `mind_doc` | `section` | mev_architecture.md → 6 sections |
+| Conversation turns | Each user+assistant exchange, max 512 tokens | `conversation` | `turn` | "What about X?" → "Here's..." |
 
 Each chunk is truncated to 512 tokens max to stay within embedding model's sweet spot.
 
@@ -239,6 +241,8 @@ recency = exp(-0.001 * hours_since_created)
 
 The decay rate (0.001) is configurable. Memories older than ~60 days need high importance or high relevance to surface.
 
+**Why multiplicative (not additive):** Multiplication means a zero in any dimension kills the score — a perfectly relevant but ancient memory (recency ~0) won't surface, and neither will a recent but irrelevant one (relevance ~0). This is intentional: it models how human memory works (you need both the right cue AND sufficient trace strength to recall). A weighted sum would let one strong dimension compensate for another weak one, which leads to noisy retrievals.
+
 ### Public Interface
 
 ```go
@@ -254,6 +258,7 @@ func (r *Retriever) SearchWithMinScore(ctx context.Context, query string, topK i
 
 ```go
 type MemoryChunk struct {
+    ID          string    // Qdrant point ID (used internally for last_accessed updates)
     Text        string
     Source      string
     SourceType  string
@@ -264,25 +269,56 @@ type MemoryChunk struct {
 }
 ```
 
+The `ID` field is used internally by `Search()` to update `last_accessed` and increment `access_count` on the returned points (async, non-blocking). Callers don't need to use it.
+
 ## Component 5: Auto-Injector (Context Builder Integration)
 
 **File:** Modify `pkg/agent/context.go`
 
+### ContextBuilder Dependency Injection
+
+`ContextBuilder` needs a new field to access the retriever. Add a `SetRetriever` method (matching the existing `SetToolsRegistry` pattern):
+
+```go
+type ContextBuilder struct {
+    workspace    string
+    skillsLoader *skills.SkillsLoader
+    memory       *MemoryStore
+    tools        *tools.ToolRegistry
+    retriever    MemoryRetriever      // NEW — interface, nil = use fallback
+}
+
+// MemoryRetriever is the interface the context builder uses for memory injection.
+type MemoryRetriever interface {
+    Search(ctx context.Context, query string, topK int) ([]MemoryChunk, error)
+}
+
+func (cb *ContextBuilder) SetRetriever(r MemoryRetriever) {
+    cb.retriever = r
+}
+```
+
+The `Retriever` is created during `AgentLoop` initialization (after config is loaded, Qdrant client and embedding client are connected). It's set on each agent's `ContextBuilder` via `SetRetriever`. If Qdrant or LM Studio is unavailable at startup, `retriever` stays nil and the fallback path is used.
+
 ### Changes to BuildMessages
 
-Replace the static `GetMemoryIndex()` call with dynamic retrieval:
+The injection happens inside `BuildMessages` (not `BuildSystemPrompt`), since `BuildMessages` already receives the `currentMessage` parameter. Replace the static `GetMemoryIndex()` call:
 
 ```
-OLD: memory_section = memory.GetMemoryIndex()  // ~500 tokens, file listing
+OLD (in BuildMessages): memory_section = cb.memory.GetMemoryIndex()
 
-NEW: memory_section = retriever.Search(ctx, userMessage, 5)  // ~1500 tokens, actual content
-     formatted as:
-     ## Relevant Memory
-     [date] (source) content...
-     [date] (source) content...
-     ...
-     Use the search_memory tool if you need information not shown above.
+NEW (in BuildMessages):
+  if cb.retriever != nil:
+    chunks, err = cb.retriever.Search(ctx, currentMessage, 5)
+    if err == nil && len(chunks) > 0:
+      memory_section = formatChunksForPrompt(chunks)  // ~1500 tokens
+    else:
+      memory_section = cb.memory.GetMemoryIndex()      // fallback
+  else:
+    memory_section = cb.memory.GetMemoryIndex()          // fallback
 ```
+
+The `BuildMessages` signature gains a `context.Context` parameter. The auto-injector truncates each chunk to 300 tokens for display (the retriever returns full 512-token chunks; truncation is the auto-injector's responsibility).
 
 ### Ephemeral Injection
 
@@ -364,7 +400,9 @@ Solana MEV Bot: Architecture complete. Executor crate needs integration testing.
 ...
 ```
 
-**Backward compatibility:** `recall_memory` is kept but deprecated. If the agent calls it, it still works (file path lookup). The `search_memory` tool is registered alongside it. Over time, the model will learn to prefer `search_memory`.
+**Backward compatibility:** `recall_memory` is kept but deprecated. If the agent calls it, it still works (file path lookup). The `search_memory` tool is registered alongside it (only when memory system is enabled). Over time, the model will learn to prefer `search_memory`.
+
+**Error handling:** If Qdrant is down when `search_memory` is called, return an error result: `"Memory search unavailable. Use recall_memory with a file path instead."` This tells the agent explicitly how to fall back. If the embedding call fails, same error. No silent degradation in tool calls — the agent needs to know so it can adapt.
 
 ## Component 7: Write Pipeline
 
@@ -374,7 +412,9 @@ After each completed conversation turn, the write pipeline indexes the new memor
 
 ### Trigger
 
-Called from the daemon's `processChat` (or the one-shot mode's response handler) after a successful LLM response. Runs async — does not block the response to the user.
+Called from `runAgentLoop` in `pkg/agent/loop.go`, after step 6 (save assistant message to session, around line 669). This is where both `opts.UserMessage` and the final assistant response are in scope. Runs in a goroutine — does not block the response to the user.
+
+Qdrant upserts are idempotent by point ID, so concurrent writes from rapid messages are safe. If the embedding call fails, log a warning and drop the chunk — the next conversation turn or periodic re-index will catch it. No retry queue needed for v1.
 
 ### Flow
 
@@ -429,6 +469,44 @@ Enable with: `systemctl --user enable --now lmstudio-server.service`
 
 This ensures the embedding model is always available regardless of whether the LM Studio GUI is open.
 
+## Startup & Initialization Order
+
+When PicoClaw starts (daemon or one-shot):
+
+```
+1. Load config (existing)
+2. Create LLM provider (existing)
+3. IF memory.enabled:
+   a. Create EmbeddingClient (ping LM Studio /v1/models, 5s timeout)
+   b. Create QdrantClient (ping /healthz, 5s timeout)
+   c. IF both succeed:
+      - Create Retriever (embeddingClient + qdrantClient + config)
+      - Ensure Qdrant collection exists (create with correct vector config + BM25 index if missing)
+      - Set retriever on each agent's ContextBuilder via SetRetriever()
+      - Create WriteHandler for post-response indexing
+      - Register search_memory tool with retriever
+   d. IF either fails:
+      - Log warning: "Memory system degraded: <reason>. Using fallback."
+      - retriever stays nil → context builder uses GetMemoryIndex() fallback
+      - search_memory tool not registered → recall_memory still available
+      - The agent works normally, just without smart memory
+4. Create AgentLoop (existing)
+5. Enter daemon/one-shot/interactive mode (existing)
+```
+
+**Ownership:** The `Retriever`, `EmbeddingClient`, and `QdrantClient` live on the `AgentLoop` struct (or a new `MemorySystem` wrapper struct). They're created once at startup and shared across all agents.
+
+**SearchMemoryTool dependency:** Constructor receives the `Retriever` directly: `NewSearchMemoryTool(retriever)`. If memory is disabled, the tool is simply not registered.
+
+### Qdrant Collection Creation
+
+The `QdrantClient` checks if collection `picoclaw_memory` exists on startup. If not, creates it with:
+- Dense vector: 768 dimensions, cosine distance
+- Full-text index on `text` field (for BM25 hybrid search)
+- Payload indexes on `source_type`, `created_at`, `importance`
+
+This is idempotent — creating an existing collection is a no-op.
+
 ## Configuration
 
 New section in `config.json`:
@@ -469,9 +547,10 @@ All fields have sensible defaults. `enabled: false` disables the entire system a
 | `pkg/memory/types.go` | Create | Shared types (MemoryChunk, Config, etc.) |
 | `pkg/tools/search_memory.go` | Create | search_memory tool |
 | `pkg/tools/search_memory_test.go` | Create | Tests |
-| `pkg/agent/context.go` | Modify | Replace GetMemoryIndex with auto-injection |
+| `pkg/agent/context.go` | Modify | Add SetRetriever, inject chunks in BuildMessages |
+| `pkg/agent/memory_test.go` | Modify | Update test that asserts "recall_memory" in index output |
 | `pkg/config/config.go` | Modify | Add MemoryConfig struct |
-| `pkg/agent/loop.go` | Modify | Register search_memory tool, wire write pipeline |
+| `pkg/agent/loop.go` | Modify | Register search_memory tool, wire write pipeline in runAgentLoop |
 | `cmd/picoclaw/cmd_memory.go` | Create | `picoclaw memory index` CLI command |
 | `docker-compose.yml` or equivalent | Create | Qdrant container config |
 | `~/.config/systemd/user/lmstudio-server.service` | Create | LM Studio systemd service |
