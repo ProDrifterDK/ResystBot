@@ -82,7 +82,7 @@ All messages are single JSON objects terminated by a newline. No framing, no len
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `type` | string | yes | Event type (message, cancel, shutdown, ready, status, response, error) |
-| `chat_id` | string | for message/cancel/status/response/error | Telegram chat ID for routing |
+| `chat_id` | string | for message/cancel/status/response; optional for error | Telegram chat ID for routing. Omit for global errors (e.g., startup failures). |
 | `user` | string | for message | User's display name |
 | `username` | string | for message | User's Telegram username |
 | `text` | string | for message/status/response/error | Message content |
@@ -102,30 +102,46 @@ A new mode alongside the existing `-m` (one-shot) and interactive (readline) mod
 
 ### Daemon Loop
 
-```
-loop:
-  read JSON line from stdin
-  switch type:
-    "message":
-      if chat_id has an in-flight request:
-        this is an implicit cancel — cancel the old context
-      create cancellable context, store in cancelMap[chat_id]
-      route to agent via ProcessDirectWithChannel()
-      on message tool callback: emit {"type":"status"} on stdout
-      on completion: emit {"type":"response"} on stdout
-      remove from cancelMap
-      save session to disk
+The stdin reader runs in its own goroutine. Each `message` event spawns a goroutine for processing, so multiple chats can be served concurrently. The stdin reader is never blocked by LLM inference.
 
-    "cancel":
-      if chat_id in cancelMap:
-        call cancel func
-        remove from cancelMap
-
-    "shutdown":
-      save all sessions to disk
-      close MCP servers
-      exit 0
 ```
+goroutine: stdin reader
+  loop:
+    read JSON line from stdin
+    switch type:
+      "message":
+        if chat_id has an in-flight request:
+          implicit cancel — call cancelMap[chat_id]()
+        create cancellable context, store in cancelMap[chat_id]
+        go processChat(ctx, chatID, message)  // goroutine per chat
+
+      "cancel":
+        if chat_id in cancelMap:
+          call cancel func, remove from cancelMap
+
+      "shutdown":
+        cancel all in-flight contexts
+        save all sessions to disk
+        close MCP servers
+        exit 0
+
+goroutine: processChat(ctx, chatID, message)
+  construct InboundMessage with channel, chatID, user metadata
+  call agentLoop.processMessage(ctx, InboundMessage)
+  if ctx was cancelled (context.Canceled):
+    discard partial result, do NOT save to session
+  else:
+    emit {"type":"response"} on stdout
+    save session to disk
+  remove from cancelMap
+```
+
+### Message Routing
+
+The daemon constructs `bus.InboundMessage` directly (not `ProcessDirectWithChannel`) so that:
+- User metadata (name, username) is preserved for tools and context
+- `ResolveRoute` handles per-chat session key derivation (e.g., `agent:main:telegram:221899910`)
+- Multi-chat sessions are properly isolated
 
 ### Cancel Map
 
@@ -136,7 +152,14 @@ type daemonState struct {
 }
 ```
 
-When a `message` arrives for a chat_id that already has an in-flight request, the daemon cancels the old context before starting the new one. This handles the interrupt case without requiring an explicit `cancel` from tg_listener (though explicit cancel is still supported).
+When a `message` arrives for a chat_id that already has an in-flight request, the daemon cancels the old context before starting the new one.
+
+**Canonical cancellation pattern:** tg_listener simply sends the new `message`. The daemon handles implicit cancel internally. The explicit `cancel` event exists as a safety valve (e.g., `/stop` command) but the normal interrupt flow is just "send new message, daemon cancels the old one."
+
+**Cancellation semantics:**
+- Cancelled LLM calls return `context.Canceled` — the daemon discards the partial result
+- No partial assistant message is saved to the session
+- The cancelMap entry is removed, and the new message is processed immediately
 
 ### Output Encoding
 
@@ -149,11 +172,19 @@ func emitEvent(eventType, chatID, text string) {
         "chat_id": chatID,
         "text":    text,
     }
-    data, _ := json.Marshal(event)
+    data, err := json.Marshal(event)
+    if err != nil {
+        fmt.Fprintln(os.Stderr, "emitEvent marshal error:", err)
+        return
+    }
     fmt.Println(string(data))
     os.Stdout.Sync()
 }
 ```
+
+### Stdout Contamination Guard
+
+In daemon mode, **only `emitEvent()` may write to stdout.** Any raw `fmt.Printf` or `fmt.Println` to stdout would corrupt the JSON-lines protocol. All existing stdout writes in `cmd_agent.go` (outbound goroutine, heartbeat keepalives, subagent completion, error messages, fallback output) must be either removed or redirected to stderr in daemon mode. The implementation should audit every `os.Stdout` / `fmt.Print` call in `cmd_agent.go` and gate them behind `if !daemonMode`.
 
 ### Message Tool Integration
 
@@ -167,6 +198,16 @@ messageTool.SetSendCallback(func(channel, chatID, content string) error {
 ```
 
 This replaces the current outbound goroutine that prints 🦞 lines.
+
+### Subagent Handling
+
+The current one-shot mode has a blocking poll loop that waits for subagents (`HasPendingSubagents`, `WaitForSubagents`, `DrainInbound`). In daemon mode this blocking approach is incompatible with serving multiple chats.
+
+**Approach:** The `processChat` goroutine handles its own subagent lifecycle:
+- After the main LLM loop returns, if subagents are pending, the goroutine continues waiting (non-blocking for other chats since each chat has its own goroutine)
+- Subagent completion results are drained and emitted as additional `status`/`response` events
+- Cancelling a chat also cancels its spawned subagents (the cancel context propagates)
+- Progress updates for long-running subagents are emitted as `{"type":"status"}` events
 
 ### Stderr
 
@@ -228,11 +269,21 @@ class DaemonManager:
 ### Crash Recovery
 
 1. Reader thread detects EOF on stdout (process died)
-2. Sends Alan: "I had a brief hiccup, restarting..."
+2. Sends all users with pending messages: "I had a brief hiccup, restarting..."
 3. Waits `backoff` seconds (starts at 2, doubles on repeated crash, max 60)
 4. Calls `start()` to respawn
-5. Replays the last unprocessed message if any
+5. Replays all pending messages (stored in `pending` dict with full payload) in arrival order
 6. If next crash is >60s later, resets backoff to 2
+
+### Session Slash Commands
+
+The tg_listener slash commands (`/new`, `/trim`, `/condense`) currently modify session files directly. In daemon mode, these must be sent as protocol messages instead of direct file writes, since the daemon owns the in-memory session state.
+
+The simplest approach: tg_listener sends these as regular `message` events with the command text. The daemon's agent processes them as user messages, and the agent can call tools to manage its own session (e.g., clear history). No new protocol events needed.
+
+### Engine Switching
+
+The `/engine` command continues to work at the tg_listener level. When engine is `picoclaw`, messages go through the `DaemonManager`. When engine is `claude`, messages go through `_claude_adapter` (subprocess-per-message, unchanged). Switching to `claude` does not stop the daemon — it stays warm for when the user switches back.
 
 ## Component 4: Session Persistence
 
@@ -282,4 +333,4 @@ The `-m` and interactive modes remain unchanged. `--daemon` is purely additive. 
 | `cmd/picoclaw/cmd_agent.go` | Modify | Add `--daemon` flag, daemon loop, emitEvent, cancel map |
 | `cmd/picoclaw/daemon.go` | Create | Daemon-specific logic (stdin reader, event emitter, cancel state) |
 | `~/.picoclaw/workspace/tg_listener.py` | Modify | Replace _picoclaw_adapter with DaemonManager |
-| `pkg/agent/loop.go` | Minor modify | Ensure ProcessDirectWithChannel supports context cancellation cleanly |
+| `pkg/agent/loop.go` | Minor modify | Expose `processMessage` for daemon use (or add a wrapper). Ensure `runAgentLoop` returns `context.Canceled` cleanly without saving partial state. |
