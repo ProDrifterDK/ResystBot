@@ -487,7 +487,6 @@ type ExecConfig struct {
 type ClaudeCodeConfig struct {
 	Enabled        bool    `json:"enabled"          env:"PICOCLAW_TOOLS_CLAUDE_CODE_ENABLED"`
 	TimeoutSeconds int     `json:"timeout_seconds"  env:"PICOCLAW_TOOLS_CLAUDE_CODE_TIMEOUT_SECONDS"` // 0 means default (600s = 10 min)
-	MaxTurns       int     `json:"max_turns"         env:"PICOCLAW_TOOLS_CLAUDE_CODE_MAX_TURNS"`        // 0 means default (50)
 	PermissionMode string  `json:"permission_mode"   env:"PICOCLAW_TOOLS_CLAUDE_CODE_PERMISSION_MODE"`  // "auto", "bypassPermissions", etc. Default: "auto"
 	MaxBudgetUSD   float64 `json:"max_budget_usd"   env:"PICOCLAW_TOOLS_CLAUDE_CODE_MAX_BUDGET_USD"`   // 0 means no limit
 }

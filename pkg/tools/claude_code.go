@@ -2,6 +2,7 @@ package tools
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -239,8 +240,10 @@ func (t *ClaudeCodeTool) Execute(ctx context.Context, args map[string]any) *Tool
 	// Build command
 	cmdArgs := t.buildCLIArgs(task, resumeSessionID)
 
-	// Spawn async
-	go t.runClaude(ctx, cmdArgs, workDir, task, 0)
+	// Spawn async — detach from caller's context so the subprocess
+	// isn't killed when the tool loop moves on after receiving AsyncResult.
+	asyncCtx := context.WithoutCancel(ctx)
+	go t.runClaude(asyncCtx, cmdArgs, workDir, task, 0)
 
 	return AsyncResult(fmt.Sprintf("Task delegated to Claude Code. Working directory: %s", workDir))
 }
@@ -288,6 +291,9 @@ func (t *ClaudeCodeTool) runClaude(ctx context.Context, cmdArgs []string, workDi
 		return
 	}
 
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
+
 	if err := cmd.Start(); err != nil {
 		t.handleError(ctx, fmt.Sprintf("failed to start claude: %v", err), cmdArgs, workDir, task, retryCount)
 		return
@@ -301,6 +307,12 @@ func (t *ClaudeCodeTool) runClaude(ctx context.Context, cmdArgs []string, workDi
 		lines = append(lines, scanner.Text())
 	}
 
+	if scanErr := scanner.Err(); scanErr != nil {
+		t.handleError(ctx, fmt.Sprintf("error reading claude stdout: %v", scanErr), cmdArgs, workDir, task, retryCount)
+		_ = cmd.Wait()
+		return
+	}
+
 	if err := cmd.Wait(); err != nil {
 		// Check if it was a timeout
 		if cmdCtx.Err() == context.DeadlineExceeded {
@@ -309,7 +321,11 @@ func (t *ClaudeCodeTool) runClaude(ctx context.Context, cmdArgs []string, workDi
 		}
 		// Process exited with error but may still have output
 		if len(lines) == 0 {
-			t.handleError(ctx, fmt.Sprintf("claude exited with error: %v", err), cmdArgs, workDir, task, retryCount)
+			errMsg := fmt.Sprintf("claude exited with error: %v", err)
+			if stderrBuf.Len() > 0 {
+				errMsg += fmt.Sprintf("; stderr: %s", stderrBuf.String())
+			}
+			t.handleError(ctx, errMsg, cmdArgs, workDir, task, retryCount)
 			return
 		}
 	}
@@ -354,8 +370,8 @@ func (t *ClaudeCodeTool) runClaude(ctx context.Context, cmdArgs []string, workDi
 // handleError either retries once or reports the error via callback.
 func (t *ClaudeCodeTool) handleError(ctx context.Context, errMsg string, cmdArgs []string, workDir, task string, retryCount int) {
 	if retryCount < 1 {
-		// Retry once
-		go t.runClaude(ctx, cmdArgs, workDir, task, retryCount+1)
+		// Retry once (already in a goroutine, no need to spawn another)
+		t.runClaude(ctx, cmdArgs, workDir, task, retryCount+1)
 		return
 	}
 
