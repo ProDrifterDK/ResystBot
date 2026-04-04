@@ -21,6 +21,7 @@ type QdrantPoint struct {
 type QdrantSearchResult struct {
 	ID      string        `json:"id"`
 	Score   float64       `json:"score"`
+	Vector  []float64     `json:"vector"`
 	Payload QdrantPayload `json:"payload"`
 }
 
@@ -157,6 +158,7 @@ func (q *QdrantClient) Search(ctx context.Context, vector []float64, limit int, 
 		"query":        vector,
 		"limit":        limit,
 		"with_payload": true,
+		"with_vectors": true,
 	}
 
 	if filter != nil && filter.SourceType != nil {
@@ -200,6 +202,7 @@ func (q *QdrantClient) Search(ctx context.Context, vector []float64, limit int, 
 			Points []struct {
 				ID      any           `json:"id"`
 				Score   float64       `json:"score"`
+				Vector  []float64     `json:"vector"`
 				Payload QdrantPayload `json:"payload"`
 			} `json:"points"`
 		} `json:"result"`
@@ -214,6 +217,7 @@ func (q *QdrantClient) Search(ctx context.Context, vector []float64, limit int, 
 		results = append(results, QdrantSearchResult{
 			ID:      anyToString(p.ID),
 			Score:   p.Score,
+			Vector:  p.Vector,
 			Payload: p.Payload,
 		})
 	}

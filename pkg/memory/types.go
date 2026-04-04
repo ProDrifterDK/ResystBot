@@ -42,7 +42,9 @@ type MemoryChunk struct {
 	Importance int
 	CreatedAt  time.Time
 	Tags       []string
-	FinalScore float64
+	FinalScore  float64
+	Vector      []float64
+	AccessCount int
 }
 
 // QdrantPayload holds metadata stored in Qdrant.
