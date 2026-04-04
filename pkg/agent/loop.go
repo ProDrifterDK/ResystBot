@@ -149,6 +149,17 @@ func registerSharedTools(
 		agent.Tools.Register(tools.NewFindSkillsTool(registryMgr, searchCache))
 		agent.Tools.Register(tools.NewInstallSkillTool(registryMgr, agent.Workspace))
 
+		// Claude Code delegation tool
+		if cfg.Tools.ClaudeCode.Enabled {
+			claudeCodeTool := tools.NewClaudeCodeTool(tools.ClaudeCodeToolConfig{
+				Workspace:      agent.Workspace,
+				TimeoutSeconds: cfg.Tools.ClaudeCode.TimeoutSeconds,
+				MaxBudgetUSD:   cfg.Tools.ClaudeCode.MaxBudgetUSD,
+				PermissionMode: cfg.Tools.ClaudeCode.PermissionMode,
+			})
+			agent.Tools.Register(claudeCodeTool)
+		}
+
 		// Spawn tool with allowlist checker
 		subagentManager := tools.NewSubagentManager(provider, agent.Model, agent.Workspace, msgBus)
 		subagentManager.SetLLMOptions(agent.MaxTokens, agent.Temperature)
@@ -1086,7 +1097,7 @@ func (al *AgentLoop) updateToolContexts(agent *AgentInstance, channel, chatID st
 func (al *AgentLoop) maybeSummarize(agent *AgentInstance, sessionKey, channel, chatID string) {
 	newHistory := agent.Sessions.GetHistory(sessionKey)
 	tokenEstimate := al.estimateTokens(newHistory)
-	threshold := agent.ContextWindow * 60 / 100
+	threshold := agent.ContextWindow * 80 / 100
 
 	if tokenEstimate > threshold {
 		summarizeKey := agent.ID + ":" + sessionKey
