@@ -117,6 +117,8 @@ func main() {
 		cronCmd()
 	case "memory":
 		memoryCmd()
+	case "consolidate":
+		consolidateCmd()
 	case "skills":
 		if len(os.Args) < 3 {
 			skillsHelp()
