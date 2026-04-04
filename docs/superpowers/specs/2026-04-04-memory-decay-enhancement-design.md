@@ -2,7 +2,7 @@
 
 **Enhancement to the Sleep Consolidation pipeline (Sub-project 2)**
 
-**Goal:** Replace the blunt Decay phase (flat -1 importance per night) with a persistent `decay_score` field that uses continuous exponential decay, while keeping the original `importance` field immutable as a content-significance signal.
+**Goal:** Replace the blunt Decay phase (flat -1 importance per night) with a persistent `decay_score` field that uses continuous exponential decay. Importance never decays over time but can still be boosted by Strengthen (rewarding frequently accessed chunks).
 
 **Architecture:** Remove `PhaseDecay`, add `PhaseScore` that recomputes `decay_score` for all chunks each consolidation run. Modify `PhasePrune` to read the stored score instead of computing it on-the-fly. Add `decay_score` field to `QdrantPayload` with a Qdrant index.
 
@@ -12,7 +12,7 @@
 
 ## 1. Conceptual Model
 
-**Importance** is a property of content — "how significant is this information." It's set at indexing time by keyword heuristics and boosted by the Strengthen phase when a chunk is frequently accessed. It never degrades over time.
+**Importance** is a property of content — "how significant is this information." It's set at indexing time by keyword heuristics and can be boosted by the Strengthen phase when a chunk is frequently accessed. It never *decays* over time (no automatic reduction), but Strengthen can increase it. This is intentional: access frequency is a positive signal about content value.
 
 **Decay score** is a property of access patterns — "how useful is this memory right now." It combines importance, access frequency, and recency into a single time-weighted value. It degrades naturally as time passes without access.
 
@@ -59,8 +59,10 @@ Replaces PhaseDecay in the consolidation pipeline.
 
 1. Remove the `pruneScore()` helper function
 2. Read `p.Payload.DecayScore` directly from the scrolled payload
-3. Compare against `PruneScoreThreshold` (same 0.05 default)
-4. Keep the min-age guard, archive-before-delete, and all existing logic
+3. **Zero-value guard:** If `DecayScore == 0.0`, skip the chunk (it hasn't been scored yet — prevents mass-pruning on first deployment before PhaseScore has ever run)
+4. Compare against `PruneScoreThreshold` (same 0.05 default)
+5. Keep the min-age guard, archive-before-delete, and all existing logic
+6. Note: Prune still scrolls with `withVectors=true` because vectors are needed for archive records, even though scoring no longer requires them
 
 ### Pipeline Order
 
@@ -87,7 +89,7 @@ Add a float payload index on `decay_score` in `EnsureCollection`, alongside the 
 
 ### ConsolidationStats (consolidation.go)
 
-Rename `ChunksDecayed` to `ChunksScored`.
+Rename `ChunksDecayed` to `ChunksScored`. Also update the `String()` method format label from `decayed=` to `scored=`.
 
 ---
 
@@ -109,10 +111,11 @@ The `--phase=score` flag replaces `--phase=decay`.
 |------|--------|
 | `pkg/memory/types.go` | Add `DecayScore float64` to `QdrantPayload` |
 | `pkg/memory/qdrant.go` | Add `decay_score` float index in `EnsureCollection` |
-| `pkg/memory/consolidation.go` | Rename `ChunksDecayed` → `ChunksScored` in stats |
-| `pkg/memory/phase_prune.go` | Remove `pruneScore()`, read `DecayScore` from payload |
+| `pkg/memory/consolidation.go` | Rename `ChunksDecayed` → `ChunksScored` in stats + `String()` format |
+| `pkg/memory/consolidation_test.go` | Update `ChunksDecayed` references to `ChunksScored` |
+| `pkg/memory/phase_prune.go` | Remove `pruneScore()`, read `DecayScore` from payload, add zero-value guard |
 | `pkg/memory/phase_prune_test.go` | Update mocks to include `DecayScore` in payload |
-| `cmd/picoclaw/cmd_consolidate.go` | Replace `"decay"` with `"score"` in phase list |
+| `cmd/picoclaw/cmd_consolidate.go` | Replace `"decay"` with `"score"` in phase list + update error message valid phases |
 
 | File | Action |
 |------|--------|
@@ -145,4 +148,5 @@ The `--phase=score` flag replaces `--phase=decay`.
 **PhasePrune test updates:**
 - Mock payloads include `DecayScore` field
 - Prune reads `DecayScore` instead of computing — remove `TestPruneScore` test
+- New test: zero-value guard — chunk with `DecayScore == 0.0` is skipped
 - Archive-before-delete tests unchanged
