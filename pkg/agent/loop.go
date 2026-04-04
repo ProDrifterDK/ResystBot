@@ -417,6 +417,13 @@ func (al *AgentLoop) ProcessDirectWithChannel(
 	return al.processMessage(ctx, msg)
 }
 
+// ProcessMessage routes and processes an inbound message through the agent system.
+// This is the main entry point for daemon mode, where the caller constructs
+// the full InboundMessage with metadata for proper routing.
+func (al *AgentLoop) ProcessMessage(ctx context.Context, msg bus.InboundMessage) (string, error) {
+	return al.processMessage(ctx, msg)
+}
+
 // ProcessHeartbeat processes a heartbeat request without session history.
 // Each heartbeat is independent and doesn't accumulate context.
 func (al *AgentLoop) ProcessHeartbeat(ctx context.Context, content, channel, chatID string) (string, error) {
@@ -1286,6 +1293,19 @@ func (al *AgentLoop) HasSentMessageInRound() bool {
 		}
 	}
 	return false
+}
+
+// GetLastSentContent returns the last content sent via the message tool.
+func (al *AgentLoop) GetLastSentContent() string {
+	defaultAgent := al.registry.GetDefaultAgent()
+	if defaultAgent != nil {
+		if tool, ok := defaultAgent.Tools.Get("message"); ok {
+			if mt, ok := tool.(*tools.MessageTool); ok {
+				return mt.GetLastSentContent()
+			}
+		}
+	}
+	return ""
 }
 
 // GetStartupInfo returns information about loaded tools and skills for logging.
