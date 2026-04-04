@@ -23,6 +23,15 @@ const (
 	ChunkTypeParagraph = "paragraph"
 )
 
+const (
+	SourceTypeConsolidated = "consolidated"
+	SourceTypeReflection   = "reflection"
+)
+
+const (
+	ChunkTypeSummary = "summary"
+)
+
 // MemoryChunk represents a memory unit.
 type MemoryChunk struct {
 	ID         string

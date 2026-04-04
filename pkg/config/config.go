@@ -504,6 +504,13 @@ type MemoryConfig struct {
 	MaxChunkTokens int      `json:"max_chunk_tokens"   env:"PICOCLAW_MEMORY_MAX_CHUNK_TOKENS"`
 	DisplayTokens  int      `json:"display_tokens"     env:"PICOCLAW_MEMORY_DISPLAY_TOKENS"`
 	IndexDirs      []string `json:"index_dirs"         env:"PICOCLAW_MEMORY_INDEX_DIRS"`
+
+	ConsolidationModel        string  `json:"consolidation_model"         env:"PICOCLAW_CONSOLIDATION_MODEL"`
+	ConsolidationLMSModelPath string  `json:"consolidation_lms_model_path" env:"PICOCLAW_CONSOLIDATION_LMS_MODEL"`
+	SimilarityThreshold       float64 `json:"similarity_threshold"        env:"PICOCLAW_SIMILARITY_THRESHOLD"`
+	PruneScoreThreshold       float64 `json:"prune_score_threshold"       env:"PICOCLAW_PRUNE_SCORE_THRESHOLD"`
+	PruneMinAgeDays           int     `json:"prune_min_age_days"          env:"PICOCLAW_PRUNE_MIN_AGE_DAYS"`
+	ArchivePath               string  `json:"archive_path"                env:"PICOCLAW_ARCHIVE_PATH"`
 }
 
 func (m MemoryConfig) GetQdrantURL() string {
@@ -567,6 +574,45 @@ func (m MemoryConfig) GetIndexDirs() []string {
 		return []string{"memory", "mind"}
 	}
 	return m.IndexDirs
+}
+
+func (m MemoryConfig) GetConsolidationModel() string {
+	if m.ConsolidationModel == "" {
+		return "qwen/qwen3.6-plus:free"
+	}
+	return m.ConsolidationModel
+}
+
+func (m MemoryConfig) GetConsolidationLMSModelPath() string {
+	return m.ConsolidationLMSModelPath
+}
+
+func (m MemoryConfig) GetSimilarityThreshold() float64 {
+	if m.SimilarityThreshold == 0 {
+		return 0.85
+	}
+	return m.SimilarityThreshold
+}
+
+func (m MemoryConfig) GetPruneScoreThreshold() float64 {
+	if m.PruneScoreThreshold == 0 {
+		return 0.05
+	}
+	return m.PruneScoreThreshold
+}
+
+func (m MemoryConfig) GetPruneMinAgeDays() int {
+	if m.PruneMinAgeDays == 0 {
+		return 14
+	}
+	return m.PruneMinAgeDays
+}
+
+func (m MemoryConfig) GetArchivePath() string {
+	if m.ArchivePath == "" {
+		return "~/.picoclaw/memory_archive"
+	}
+	return m.ArchivePath
 }
 
 type ToolsConfig struct {
