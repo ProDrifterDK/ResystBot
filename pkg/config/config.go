@@ -483,12 +483,22 @@ type ExecConfig struct {
 	SudoPassword       string   `json:"sudo_password"        env:"PICOCLAW_TOOLS_EXEC_SUDO_PASSWORD"`   // password piped to sudo -S; leave empty to block sudo
 }
 
+// ClaudeCodeConfig holds configuration for the Claude Code delegation tool.
+type ClaudeCodeConfig struct {
+	Enabled        bool    `json:"enabled"          env:"PICOCLAW_TOOLS_CLAUDE_CODE_ENABLED"`
+	TimeoutSeconds int     `json:"timeout_seconds"  env:"PICOCLAW_TOOLS_CLAUDE_CODE_TIMEOUT_SECONDS"` // 0 means default (600s = 10 min)
+	MaxTurns       int     `json:"max_turns"         env:"PICOCLAW_TOOLS_CLAUDE_CODE_MAX_TURNS"`        // 0 means default (50)
+	PermissionMode string  `json:"permission_mode"   env:"PICOCLAW_TOOLS_CLAUDE_CODE_PERMISSION_MODE"`  // "auto", "bypassPermissions", etc. Default: "auto"
+	MaxBudgetUSD   float64 `json:"max_budget_usd"   env:"PICOCLAW_TOOLS_CLAUDE_CODE_MAX_BUDGET_USD"`   // 0 means no limit
+}
+
 type ToolsConfig struct {
-	Web    WebToolsConfig    `json:"web"`
-	Cron   CronToolsConfig   `json:"cron"`
-	Exec   ExecConfig        `json:"exec"`
-	Skills SkillsToolsConfig `json:"skills"`
-	MCP    MCPConfig         `json:"mcp,omitempty"`
+	Web        WebToolsConfig    `json:"web"`
+	Cron       CronToolsConfig   `json:"cron"`
+	Exec       ExecConfig        `json:"exec"`
+	Skills     SkillsToolsConfig `json:"skills"`
+	MCP        MCPConfig         `json:"mcp,omitempty"`
+	ClaudeCode ClaudeCodeConfig  `json:"claude_code,omitempty"`
 }
 
 // MCPConfig holds configuration for MCP (Model Context Protocol) servers.
