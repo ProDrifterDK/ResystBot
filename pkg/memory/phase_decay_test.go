@@ -41,8 +41,8 @@ func TestPhaseDecay_ReducesStaleChunks(t *testing.T) {
 		t.Error("old2 should not be updated (already at floor)")
 	}
 
-	if stats.ChunksDecayed != 1 {
-		t.Errorf("expected 1 decayed, got %d", stats.ChunksDecayed)
+	if stats.ChunksScored != 1 {
+		t.Errorf("expected 1 scored, got %d", stats.ChunksScored)
 	}
 }
 

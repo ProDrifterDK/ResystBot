@@ -41,7 +41,7 @@ func PhaseDecay(ctx context.Context, deps *ConsolidationDeps, stats *Consolidati
 				continue
 			}
 		}
-		stats.ChunksDecayed++
+		stats.ChunksScored++
 	}
 
 	return nil

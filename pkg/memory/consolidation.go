@@ -70,7 +70,7 @@ type ConsolidationStats struct {
 	ChunksMerged         int
 	SummariesCreated     int
 	ChunksStrengthened   int
-	ChunksDecayed        int
+	ChunksScored         int
 	ChunksPruned         int
 	ReflectionsGenerated int
 	Errors               []string
@@ -127,9 +127,9 @@ func RunConsolidation(ctx context.Context, deps *ConsolidationDeps, phases ...Na
 // String returns a human-readable summary of consolidation stats.
 func (s *ConsolidationStats) String() string {
 	return fmt.Sprintf(
-		"clusters=%d merged=%d summaries=%d strengthened=%d decayed=%d pruned=%d reflections=%d errors=%d",
+		"clusters=%d merged=%d summaries=%d strengthened=%d scored=%d pruned=%d reflections=%d errors=%d",
 		s.ClustersFound, s.ChunksMerged, s.SummariesCreated,
-		s.ChunksStrengthened, s.ChunksDecayed, s.ChunksPruned,
+		s.ChunksStrengthened, s.ChunksScored, s.ChunksPruned,
 		s.ReflectionsGenerated, len(s.Errors),
 	)
 }

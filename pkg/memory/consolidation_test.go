@@ -16,7 +16,7 @@ func TestRunConsolidation_AllPhases(t *testing.T) {
 	}
 	phase2 := func(ctx context.Context, deps *ConsolidationDeps, stats *ConsolidationStats) error {
 		callOrder = append(callOrder, "phase2")
-		stats.ChunksDecayed = 2
+		stats.ChunksScored = 2
 		return nil
 	}
 
@@ -34,8 +34,8 @@ func TestRunConsolidation_AllPhases(t *testing.T) {
 	if stats.ChunksStrengthened != 3 {
 		t.Errorf("expected 3 strengthened, got %d", stats.ChunksStrengthened)
 	}
-	if stats.ChunksDecayed != 2 {
-		t.Errorf("expected 2 decayed, got %d", stats.ChunksDecayed)
+	if stats.ChunksScored != 2 {
+		t.Errorf("expected 2 scored, got %d", stats.ChunksScored)
 	}
 }
 
