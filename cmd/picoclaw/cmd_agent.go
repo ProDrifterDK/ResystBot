@@ -54,6 +54,7 @@ func agentCmd() {
 	modelOverride := ""
 	channel := "cli"
 	chatID := "direct"
+	daemon := false
 
 	args := os.Args[2:]
 	for i := 0; i < len(args); i++ {
@@ -86,6 +87,8 @@ func agentCmd() {
 				chatID = args[i+1]
 				i++
 			}
+		case "--daemon":
+			daemon = true
 		}
 	}
 
@@ -183,7 +186,9 @@ func agentCmd() {
 			"skills_available": startupInfo["skills"].(map[string]any)["available"],
 		})
 
-	if message != "" {
+	if daemon {
+		daemonMode(agentLoop, msgBus, channel)
+	} else if message != "" {
 		ctx := context.Background()
 		response, err := agentLoop.ProcessDirectWithChannel(ctx, message, sessionKey, channel, chatID)
 		if err != nil {
@@ -191,9 +196,21 @@ func agentCmd() {
 			os.Stdout.Sync() //nolint:errcheck
 			os.Exit(1)
 		}
-		if !agentLoop.HasSentMessageInRound() && response != "" && response != "SILENT" {
-			fmt.Printf("\n%s %s\n", logo, response)
-			os.Stdout.Sync() //nolint:errcheck
+		if response != "" && response != "SILENT" {
+			if agentLoop.HasSentMessageInRound() {
+				// The message tool already sent content to the user via the
+				// outbound goroutine. Only print the final response if it's
+				// different (i.e. a synthesized answer after tool use, not a
+				// duplicate of what was already sent).
+				lastSent := agentLoop.GetLastSentContent()
+				if response != lastSent {
+					fmt.Printf("\n%s %s\n", logo, response)
+					os.Stdout.Sync() //nolint:errcheck
+				}
+			} else {
+				fmt.Printf("\n%s %s\n", logo, response)
+				os.Stdout.Sync() //nolint:errcheck
+			}
 		}
 
 		// Emit heartbeat lines every 30s while subagents run so the
