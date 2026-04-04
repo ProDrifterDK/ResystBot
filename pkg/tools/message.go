@@ -9,11 +9,12 @@ import (
 type SendCallback func(channel, chatID, content string) error
 
 type MessageTool struct {
-	mu             sync.Mutex
-	sendCallback   SendCallback
-	defaultChannel string
-	defaultChatID  string
-	sentInRound    bool // Tracks whether a message was sent in the current processing round
+	mu              sync.Mutex
+	sendCallback    SendCallback
+	defaultChannel  string
+	defaultChatID   string
+	sentInRound     bool   // Tracks whether a message was sent in the current processing round
+	lastSentContent string // Last content sent via the message tool in this round
 }
 
 func NewMessageTool() *MessageTool {
@@ -64,6 +65,13 @@ func (t *MessageTool) HasSentInRound() bool {
 	return t.sentInRound
 }
 
+// GetLastSentContent returns the last content sent via the message tool in this round.
+func (t *MessageTool) GetLastSentContent() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.lastSentContent
+}
+
 func (t *MessageTool) SetSendCallback(callback SendCallback) {
 	t.sendCallback = callback
 }
@@ -102,6 +110,7 @@ func (t *MessageTool) Execute(ctx context.Context, args map[string]any) *ToolRes
 
 	t.mu.Lock()
 	t.sentInRound = true
+	t.lastSentContent = content
 	t.mu.Unlock()
 	// Silent: user already received the message directly
 	return &ToolResult{
