@@ -21,17 +21,20 @@ Reconsolidation runs async after each LLM response, alongside the existing `Inde
 Check if the response contains update signal keywords:
 
 ```go
-var reconsolidationKeywords = []string{
-    "actually", "no longer", "fixed", "changed", "now",
-    "updated", "was", "resolved", "switched", "replaced",
+var ReconsolidationKeywords = []string{
+    "actually", "no longer", "fixed", "changed",
+    "updated", "resolved", "switched", "replaced",
+    "not anymore", "turns out", "corrected",
 }
 ```
+
+Matching is **case-insensitive** (`strings.ToLower` before checking). "now" and "was" are excluded — too common in normal responses, would defeat the cheap-filter purpose.
 
 If no keywords match, stop. Most messages exit here.
 
 ### Stage 2: Similarity Check (cost: 1 embedding call)
 
-Embed the LLM response, compute cosine similarity against each injected memory's vector. Candidates are memories with similarity > 0.75.
+Embed the LLM response using `EmbedForIndexing` (document prefix, NOT query prefix — both vectors must use the same prefix for a valid similarity comparison, since this is semantic overlap, not retrieval). Compute cosine similarity against each injected memory's vector. Candidates are memories with similarity > 0.75.
 
 If no candidates, stop.
 
@@ -49,7 +52,7 @@ Stored memory: {chunk.Text}
 
 New information: {llmResponse}
 
-Does the new information update this memory? If yes, provide the updated text. If no, respond with "NO_UPDATE".
+Does the new information update this memory? If yes, respond with ONLY the updated memory text, preserving the original format and approximate length. If no, respond with "NO_UPDATE".
 ```
 
 If the LLM responds with `NO_UPDATE`, skip. Otherwise, use the response as the new memory text.
@@ -64,10 +67,11 @@ When the LLM confirms an update:
 2. **Upsert** to Qdrant with the same point ID:
    - New text
    - New vector
-   - Same source, source_type, chunk_type, importance, tags
+   - Same source, source_type, chunk_type, importance
+   - Re-extract tags from updated text via `extractTags()`
    - Reset `last_accessed` to now
-   - Increment `access_count` by 1
    - Preserve `decay_score` (will be recomputed by next consolidation run)
+3. **Update access_count** via `UpdatePayload` (increment by 1) — done as a separate call since the upsert replaces the full payload and we don't want to fetch the current value first. Alternative: use `UpdatePayload` for text+vector too, but Qdrant's payload update doesn't support vector replacement, so a full point upsert is needed. The `access_count` from the existing payload is carried on `MemoryChunk` (see Section 5).
 3. **Append to log** at `mind/reconsolidation/YYYY-MM.md`:
 
 ```markdown
@@ -140,9 +144,15 @@ func (h *ReconsolidationHandler) replaceChunk(ctx context.Context, chunk MemoryC
 
 **Problem:** `MemoryChunk` (from retrieval) doesn't carry vectors. But stage 2 needs the injected memories' vectors for similarity comparison against the response.
 
-**Solution:** Add a `Vector []float64` field to `MemoryChunk`. The retriever already has access to vectors from the Qdrant search results — it just doesn't store them on the returned chunks. Modify `Retriever.searchInternal` to populate `chunk.Vector` from the search result.
+**Solution requires changes at three levels:**
 
-This is a small change to `pkg/memory/retrieval.go` and `pkg/memory/types.go`.
+1. **`QdrantClient.Search` (qdrant.go):** Add `"with_vectors": true` to the search request body. Add `Vector []float64` field to `QdrantSearchResult`. Parse vectors from Qdrant response.
+
+2. **`MemoryChunk` (types.go):** Add `Vector []float64` field.
+
+3. **`Retriever.searchInternal` (retrieval.go):** Populate `chunk.Vector` from `result.Vector` when building MemoryChunk from search results.
+
+Additionally, add `AccessCount int` to `MemoryChunk` so the reconsolidation handler can carry it through for the upsert payload.
 
 ---
 
@@ -203,8 +213,9 @@ This is a small change to `pkg/memory/retrieval.go` and `pkg/memory/types.go`.
 
 | File | Change |
 |------|--------|
-| `pkg/memory/types.go` | Add `Vector []float64` field to `MemoryChunk` |
-| `pkg/memory/retrieval.go` | Populate `chunk.Vector` from search results |
+| `pkg/memory/types.go` | Add `Vector []float64` and `AccessCount int` fields to `MemoryChunk` |
+| `pkg/memory/qdrant.go` | Add `with_vectors: true` to Search, add `Vector` to `QdrantSearchResult` |
+| `pkg/memory/retrieval.go` | Populate `chunk.Vector` and `chunk.AccessCount` from search results |
 | `pkg/agent/context.go` | Add `lastInjectedChunks` field + `GetInjectedChunks()` accessor |
 | `pkg/agent/loop.go` | Call `reconsolidationHandler.Check()` after LLM response |
 
@@ -214,12 +225,13 @@ This is a small change to `pkg/memory/retrieval.go` and `pkg/memory/types.go`.
 
 ```go
 var ReconsolidationKeywords = []string{
-    "actually", "no longer", "fixed", "changed", "now",
-    "updated", "was", "resolved", "switched", "replaced",
+    "actually", "no longer", "fixed", "changed",
+    "updated", "resolved", "switched", "replaced",
+    "not anymore", "turns out", "corrected",
 }
 
 const ReconsolidationSimilarityThreshold = 0.75
 const MaxReconsolidationCandidates = 2
 ```
 
-Hardcoded, same pattern as `ScoreImportance` keywords. No config fields needed.
+Matching is case-insensitive. Hardcoded constants, same pattern as `ScoreImportance` keywords. No config fields needed.
