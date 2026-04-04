@@ -55,6 +55,7 @@ type Config struct {
 	ModelList []ModelConfig   `json:"model_list"` // New model-centric provider configuration
 	Gateway   GatewayConfig   `json:"gateway"`
 	Tools     ToolsConfig     `json:"tools"`
+	Memory    MemoryConfig    `json:"memory,omitempty"`
 	Heartbeat HeartbeatConfig `json:"heartbeat"`
 	Devices   DevicesConfig   `json:"devices"`
 }
@@ -489,6 +490,83 @@ type ClaudeCodeConfig struct {
 	TimeoutSeconds int     `json:"timeout_seconds"  env:"PICOCLAW_TOOLS_CLAUDE_CODE_TIMEOUT_SECONDS"` // 0 means default (600s = 10 min)
 	PermissionMode string  `json:"permission_mode"   env:"PICOCLAW_TOOLS_CLAUDE_CODE_PERMISSION_MODE"`  // "auto", "bypassPermissions", etc. Default: "auto"
 	MaxBudgetUSD   float64 `json:"max_budget_usd"   env:"PICOCLAW_TOOLS_CLAUDE_CODE_MAX_BUDGET_USD"`   // 0 means no limit
+}
+
+// MemoryConfig holds configuration for the hippocampal memory system.
+type MemoryConfig struct {
+	Enabled        bool     `json:"enabled"            env:"PICOCLAW_MEMORY_ENABLED"`
+	QdrantURL      string   `json:"qdrant_url"         env:"PICOCLAW_MEMORY_QDRANT_URL"`
+	EmbeddingURL   string   `json:"embedding_url"      env:"PICOCLAW_MEMORY_EMBEDDING_URL"`
+	EmbeddingModel string   `json:"embedding_model"    env:"PICOCLAW_MEMORY_EMBEDDING_MODEL"`
+	CollectionName string   `json:"collection_name"    env:"PICOCLAW_MEMORY_COLLECTION_NAME"`
+	AutoInjectTopK int      `json:"auto_inject_top_k"  env:"PICOCLAW_MEMORY_AUTO_INJECT_TOP_K"`
+	DecayRate      float64  `json:"decay_rate"         env:"PICOCLAW_MEMORY_DECAY_RATE"`
+	MaxChunkTokens int      `json:"max_chunk_tokens"   env:"PICOCLAW_MEMORY_MAX_CHUNK_TOKENS"`
+	DisplayTokens  int      `json:"display_tokens"     env:"PICOCLAW_MEMORY_DISPLAY_TOKENS"`
+	IndexDirs      []string `json:"index_dirs"         env:"PICOCLAW_MEMORY_INDEX_DIRS"`
+}
+
+func (m MemoryConfig) GetQdrantURL() string {
+	if m.QdrantURL == "" {
+		return "http://127.0.0.1:6333"
+	}
+	return m.QdrantURL
+}
+
+func (m MemoryConfig) GetEmbeddingURL() string {
+	if m.EmbeddingURL == "" {
+		return "http://127.0.0.1:1234/v1"
+	}
+	return m.EmbeddingURL
+}
+
+func (m MemoryConfig) GetEmbeddingModel() string {
+	if m.EmbeddingModel == "" {
+		return "text-embedding-nomic-embed-text-v1.5"
+	}
+	return m.EmbeddingModel
+}
+
+func (m MemoryConfig) GetCollectionName() string {
+	if m.CollectionName == "" {
+		return "picoclaw_memory"
+	}
+	return m.CollectionName
+}
+
+func (m MemoryConfig) GetAutoInjectTopK() int {
+	if m.AutoInjectTopK == 0 {
+		return 5
+	}
+	return m.AutoInjectTopK
+}
+
+func (m MemoryConfig) GetDecayRate() float64 {
+	if m.DecayRate == 0 {
+		return 0.001
+	}
+	return m.DecayRate
+}
+
+func (m MemoryConfig) GetMaxChunkTokens() int {
+	if m.MaxChunkTokens == 0 {
+		return 512
+	}
+	return m.MaxChunkTokens
+}
+
+func (m MemoryConfig) GetDisplayTokens() int {
+	if m.DisplayTokens == 0 {
+		return 300
+	}
+	return m.DisplayTokens
+}
+
+func (m MemoryConfig) GetIndexDirs() []string {
+	if len(m.IndexDirs) == 0 {
+		return []string{"memory", "mind"}
+	}
+	return m.IndexDirs
 }
 
 type ToolsConfig struct {

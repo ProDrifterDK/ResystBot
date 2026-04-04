@@ -17,6 +17,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/channels"
 	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/picoclaw/pkg/memory"
 	"github.com/sipeed/picoclaw/pkg/constants"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/providers"
@@ -38,6 +39,7 @@ type AgentLoop struct {
 	fallback         *providers.FallbackChain
 	channelManager   *channels.Manager
 	subagentManagers map[string]*tools.SubagentManager
+	memoryWriter     *memory.WriteHandler
 }
 
 // processOptions configures how a message is processed
@@ -69,7 +71,7 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 		stateManager = state.NewManager(defaultAgent.Workspace)
 	}
 
-	return &AgentLoop{
+	al := &AgentLoop{
 		bus:              msgBus,
 		cfg:              cfg,
 		registry:         registry,
@@ -78,6 +80,25 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 		fallback:         fallbackChain,
 		subagentManagers: subagentManagers,
 	}
+
+	// Initialize memory write pipeline
+	if cfg.Memory.Enabled {
+		// Check if memory system was successfully initialized by registerSharedTools
+		// by verifying the default agent got a retriever
+		if defaultAgent != nil && defaultAgent.ContextBuilder != nil {
+			embedClient := memory.NewEmbeddingClient(
+				cfg.Memory.GetEmbeddingURL(),
+				cfg.Memory.GetEmbeddingModel(),
+			)
+			qdrantClient := memory.NewQdrantClient(
+				cfg.Memory.GetQdrantURL(),
+				cfg.Memory.GetCollectionName(),
+			)
+			al.memoryWriter = memory.NewWriteHandler(embedClient, qdrantClient)
+		}
+	}
+
+	return al
 }
 
 // registerSharedTools registers tools that are shared across all agents (web, message, spawn).
@@ -158,6 +179,41 @@ func registerSharedTools(
 				PermissionMode: cfg.Tools.ClaudeCode.PermissionMode,
 			})
 			agent.Tools.Register(claudeCodeTool)
+		}
+
+		// Hippocampal memory system
+		if cfg.Memory.Enabled {
+			embedClient := memory.NewEmbeddingClient(
+				cfg.Memory.GetEmbeddingURL(),
+				cfg.Memory.GetEmbeddingModel(),
+			)
+			qdrantClient := memory.NewQdrantClient(
+				cfg.Memory.GetQdrantURL(),
+				cfg.Memory.GetCollectionName(),
+			)
+
+			// Ping both services (5s timeout)
+			pingCtx, pingCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			embedErr := embedClient.Ping(pingCtx)
+			qdrantErr := qdrantClient.Ping(pingCtx)
+			pingCancel()
+
+			if embedErr != nil || qdrantErr != nil {
+				logger.WarnCF("agent", "Memory system degraded, using fallback", map[string]any{
+					"embed_error":  fmt.Sprintf("%v", embedErr),
+					"qdrant_error": fmt.Sprintf("%v", qdrantErr),
+				})
+			} else {
+				// Ensure collection exists
+				if err := qdrantClient.EnsureCollection(context.Background(), 768); err != nil {
+					logger.WarnCF("agent", "Failed to ensure Qdrant collection", map[string]any{"error": err.Error()})
+				} else {
+					retriever := memory.NewRetriever(embedClient, qdrantClient, cfg.Memory.GetDecayRate())
+					agent.ContextBuilder.SetRetriever(retriever)
+					agent.Tools.Register(tools.NewSearchMemoryTool(retriever))
+					logger.InfoCF("agent", "Memory system enabled", map[string]any{"agent_id": agentID})
+				}
+			}
 		}
 
 		// Spawn tool with allowlist checker
@@ -638,6 +694,7 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, agent *AgentInstance, opt
 		summary = agent.Sessions.GetSummary(opts.SessionKey)
 	}
 	messages := agent.ContextBuilder.BuildMessages(
+		ctx,
 		history,
 		summary,
 		opts.UserMessage,
@@ -673,6 +730,11 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, agent *AgentInstance, opt
 		ReasoningDetails: finalMsg.ReasoningDetails,
 	})
 	agent.Sessions.Save(opts.SessionKey)
+
+	// 6b. Index conversation turn in memory system (async, non-blocking)
+	if al.memoryWriter != nil && finalContent != "" && finalContent != opts.DefaultResponse {
+		al.memoryWriter.IndexConversationTurn(opts.UserMessage, finalContent, opts.ChatID)
+	}
 
 	// 7. Optional: summarization
 	if opts.EnableSummary {
@@ -831,7 +893,7 @@ func (al *AgentLoop) runLLMIteration(
 				newHistory := session.CompressForLLM(agent.Sessions.GetHistory(opts.SessionKey))
 				newSummary := agent.Sessions.GetSummary(opts.SessionKey)
 				messages = agent.ContextBuilder.BuildMessages(
-					newHistory, newSummary, "",
+					ctx, newHistory, newSummary, "",
 					nil, opts.Channel, opts.ChatID,
 				)
 				messages = sanitizeMessageHistory(messages)
@@ -854,7 +916,7 @@ func (al *AgentLoop) runLLMIteration(
 				newHistory := session.CompressForLLM(agent.Sessions.GetHistory(opts.SessionKey))
 				newSummary := agent.Sessions.GetSummary(opts.SessionKey)
 				messages = agent.ContextBuilder.BuildMessages(
-					newHistory, newSummary, "",
+					ctx, newHistory, newSummary, "",
 					nil, opts.Channel, opts.ChatID,
 				)
 				messages = sanitizeMessageHistory(messages)
