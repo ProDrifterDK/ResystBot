@@ -1,8 +1,15 @@
 package tools
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
+	"time"
 )
 
 // ClaudeCodeToolConfig holds the configuration for the Claude Code delegation tool.
@@ -98,8 +105,220 @@ func (t *ClaudeCodeTool) SetCallback(cb AsyncCallback) {
 	t.callback = cb
 }
 
+// claudeResult holds parsed output from a Claude Code stream-json run.
+type claudeResult struct {
+	SessionID string
+	Summary   string
+	IsError   bool
+	CostUSD   float64
+}
+
+// parseClaudeStreamJSON extracts session ID, summary, and error status
+// from Claude Code's stream-json output lines.
+func parseClaudeStreamJSON(lines []string) claudeResult {
+	if len(lines) == 0 {
+		return claudeResult{IsError: true, Summary: "no output from Claude Code"}
+	}
+
+	var result claudeResult
+	for _, line := range lines {
+		var event map[string]any
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			continue
+		}
+
+		eventType, _ := event["type"].(string)
+
+		switch eventType {
+		case "system":
+			if sid, ok := event["session_id"].(string); ok {
+				result.SessionID = sid
+			}
+		case "result":
+			if sid, ok := event["session_id"].(string); ok {
+				result.SessionID = sid
+			}
+			if summary, ok := event["result"].(string); ok {
+				result.Summary = summary
+			}
+			if isErr, ok := event["is_error"].(bool); ok {
+				result.IsError = isErr
+			}
+			if cost, ok := event["total_cost_usd"].(float64); ok {
+				result.CostUSD = cost
+			}
+		}
+	}
+
+	if result.Summary == "" && !result.IsError {
+		result.IsError = true
+		result.Summary = "no result event in Claude Code output"
+	}
+
+	return result
+}
+
 // Execute implements Tool interface — delegates to Claude Code CLI.
 func (t *ClaudeCodeTool) Execute(ctx context.Context, args map[string]any) *ToolResult {
-	// Placeholder — will be implemented in Task 4
-	return ErrorResult("claude_code tool not yet implemented")
+	task, ok := args["task"].(string)
+	if !ok || strings.TrimSpace(task) == "" {
+		return ErrorResult("task is required and must be a non-empty string")
+	}
+
+	workDir := t.config.Workspace
+	if wd, ok := args["working_directory"].(string); ok && wd != "" {
+		workDir = wd
+	}
+
+	newSession, _ := args["new_session"].(bool)
+	explicitSessionID, _ := args["session_id"].(string)
+
+	// Check claude binary exists
+	if _, err := exec.LookPath(t.claudeBinary); err != nil {
+		return ErrorResult(fmt.Sprintf("claude binary not found: %v", err))
+	}
+
+	// Ensure reports directory exists
+	_ = os.MkdirAll(t.reportsDir, 0755)
+
+	// Resolve session ID
+	var resumeSessionID string
+	if !newSession {
+		if explicitSessionID != "" {
+			resumeSessionID = explicitSessionID
+		} else if entry, ok := t.sessions.Get(workDir); ok {
+			resumeSessionID = entry.SessionID
+		}
+	}
+
+	// Prune old sessions
+	t.sessions.Prune(7 * 24 * time.Hour)
+
+	// Build command
+	cmdArgs := t.buildCLIArgs(task, resumeSessionID)
+
+	// Spawn async
+	go t.runClaude(ctx, cmdArgs, workDir, task, 0)
+
+	return AsyncResult(fmt.Sprintf("Task delegated to Claude Code. Working directory: %s", workDir))
+}
+
+// buildCLIArgs constructs the claude CLI arguments.
+func (t *ClaudeCodeTool) buildCLIArgs(task, resumeSessionID string) []string {
+	args := []string{
+		"-p",
+		"--output-format", "stream-json",
+		"--permission-mode", t.config.PermissionMode,
+	}
+
+	if resumeSessionID != "" {
+		args = append(args, "--resume", resumeSessionID)
+	}
+
+	// Load system prompt from DELEGATION.md if it exists
+	if data, err := os.ReadFile(t.delegationFile); err == nil {
+		args = append(args, "--system-prompt", string(data))
+	}
+
+	if t.config.MaxBudgetUSD > 0 {
+		args = append(args, "--max-budget-usd", fmt.Sprintf("%.2f", t.config.MaxBudgetUSD))
+	}
+
+	// The task prompt goes last
+	args = append(args, task)
+
+	return args
+}
+
+// runClaude spawns the claude subprocess and handles the result.
+// retryCount tracks how many retries have been attempted (max 1).
+func (t *ClaudeCodeTool) runClaude(ctx context.Context, cmdArgs []string, workDir, task string, retryCount int) {
+	timeout := time.Duration(t.config.TimeoutSeconds) * time.Second
+	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(cmdCtx, t.claudeBinary, cmdArgs...)
+	cmd.Dir = workDir
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.handleError(ctx, fmt.Sprintf("failed to create stdout pipe: %v", err), cmdArgs, workDir, task, retryCount)
+		return
+	}
+
+	if err := cmd.Start(); err != nil {
+		t.handleError(ctx, fmt.Sprintf("failed to start claude: %v", err), cmdArgs, workDir, task, retryCount)
+		return
+	}
+
+	// Read all stream-json lines
+	var lines []string
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 0, 256*1024), 1024*1024) // 1MB max line
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+
+	if err := cmd.Wait(); err != nil {
+		// Check if it was a timeout
+		if cmdCtx.Err() == context.DeadlineExceeded {
+			t.handleError(ctx, fmt.Sprintf("claude timed out after %v", timeout), cmdArgs, workDir, task, retryCount)
+			return
+		}
+		// Process exited with error but may still have output
+		if len(lines) == 0 {
+			t.handleError(ctx, fmt.Sprintf("claude exited with error: %v", err), cmdArgs, workDir, task, retryCount)
+			return
+		}
+	}
+
+	// Parse the result
+	result := parseClaudeStreamJSON(lines)
+
+	if result.IsError && retryCount < 1 {
+		t.handleError(ctx, result.Summary, cmdArgs, workDir, task, retryCount)
+		return
+	}
+
+	// Save session
+	if result.SessionID != "" {
+		summary := result.Summary
+		if len(summary) > 100 {
+			summary = summary[:100]
+		}
+		t.sessions.Save(workDir, result.SessionID, summary)
+	}
+
+	// Build callback message
+	callbackMsg := fmt.Sprintf("Claude Code completed task in %s:\n\"%s\"", workDir, result.Summary)
+	if result.CostUSD > 0 {
+		callbackMsg += fmt.Sprintf("\n(Cost: $%.4f)", result.CostUSD)
+	}
+
+	if result.IsError {
+		callbackMsg = fmt.Sprintf("Claude Code failed in %s:\n\"%s\"", workDir, result.Summary)
+	}
+
+	if t.callback != nil {
+		toolResult := &ToolResult{
+			ForLLM:  callbackMsg,
+			ForUser: callbackMsg,
+			IsError: result.IsError,
+		}
+		t.callback(ctx, toolResult)
+	}
+}
+
+// handleError either retries once or reports the error via callback.
+func (t *ClaudeCodeTool) handleError(ctx context.Context, errMsg string, cmdArgs []string, workDir, task string, retryCount int) {
+	if retryCount < 1 {
+		// Retry once
+		go t.runClaude(ctx, cmdArgs, workDir, task, retryCount+1)
+		return
+	}
+
+	// Report error
+	if t.callback != nil {
+		t.callback(ctx, ErrorResult(fmt.Sprintf("Claude Code delegation failed after retry: %s", errMsg)))
+	}
 }
