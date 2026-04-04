@@ -79,7 +79,7 @@ func consolidateCmd() {
 	allPhases := []memory.NamedPhase{
 		{Name: "abstract", Fn: memory.PhaseAbstract},
 		{Name: "strengthen", Fn: memory.PhaseStrengthen},
-		{Name: "decay", Fn: memory.PhaseDecay},
+		{Name: "score", Fn: memory.PhaseScore},
 		{Name: "prune", Fn: memory.PhasePrune},
 		{Name: "reflect", Fn: memory.PhaseReflect},
 	}
@@ -88,7 +88,7 @@ func consolidateCmd() {
 	if phaseName != "" {
 		phases = memory.FilterPhases(allPhases, phaseName)
 		if len(phases) == 0 {
-			fmt.Printf("Unknown phase: %s\nValid phases: abstract, strengthen, decay, prune, reflect\n", phaseName)
+			fmt.Printf("Unknown phase: %s\nValid phases: abstract, strengthen, score, prune, reflect\n", phaseName)
 			os.Exit(1)
 		}
 	}
