@@ -1544,7 +1544,18 @@ func (al *AgentLoop) summarizeSession(agent *AgentInstance, sessionKey string) {
 	}
 
 	if finalSummary != "" {
+		// Ensure discarded turns are in Qdrant before truncation
+		if al.memoryWriter != nil {
+			al.memoryWriter.EnsureIndexed(sessionKey, toSummarize)
+		}
+
 		agent.Sessions.SetSummary(sessionKey, finalSummary)
+
+		// Index summary as a memory chunk
+		if al.memoryWriter != nil {
+			al.memoryWriter.IndexSummary(sessionKey, finalSummary)
+		}
+
 		agent.Sessions.TruncateHistory(sessionKey, 4)
 		// Sanitize after truncation to remove orphaned tool call/result pairs
 		truncated := agent.Sessions.GetHistory(sessionKey)
