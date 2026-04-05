@@ -157,3 +157,31 @@ func TestExtractPairs_SkipsToolOnlyMessages(t *testing.T) {
 		t.Fatalf("expected 0 pairs for tool/system only messages, got %d", len(pairs))
 	}
 }
+
+func TestBuildSummaryChunk(t *testing.T) {
+	h := NewWriteHandler(nil, nil)
+
+	chunk := h.BuildSummaryChunk("agent:main:main", "The user discussed MEV bot status and memory system architecture.")
+
+	if chunk.SourceType != SourceTypeConversation {
+		t.Errorf("expected source_type conversation, got %s", chunk.SourceType)
+	}
+	if chunk.ChunkType != ChunkTypeSummary {
+		t.Errorf("expected chunk_type summary, got %s", chunk.ChunkType)
+	}
+	if chunk.Source != "session:agent:main:main:summary" {
+		t.Errorf("expected source session:agent:main:main:summary, got %s", chunk.Source)
+	}
+	if chunk.Importance != 6 {
+		t.Errorf("expected importance 6, got %d", chunk.Importance)
+	}
+	if chunk.ID == "" {
+		t.Error("expected non-empty ID")
+	}
+
+	// Deterministic: same session+text = same ID
+	chunk2 := h.BuildSummaryChunk("agent:main:main", "The user discussed MEV bot status and memory system architecture.")
+	if chunk.ID != chunk2.ID {
+		t.Error("expected deterministic ID for same content")
+	}
+}

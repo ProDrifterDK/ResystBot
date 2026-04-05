@@ -200,6 +200,65 @@ func (w *WriteHandler) EnsureIndexed(sessionKey string, messages []providers.Mes
 	}
 }
 
+// BuildSummaryChunk constructs a MemoryChunk from a session summary.
+func (w *WriteHandler) BuildSummaryChunk(sessionKey, summaryText string) MemoryChunk {
+	now := time.Now().UTC()
+	source := fmt.Sprintf("session:%s:summary", sessionKey)
+	id := GeneratePointID("summary:"+sessionKey, summaryText)
+
+	return MemoryChunk{
+		ID:         id,
+		Text:       summaryText,
+		Source:     source,
+		SourceType: SourceTypeConversation,
+		ChunkType:  ChunkTypeSummary,
+		Importance: 6,
+		CreatedAt:  now,
+		Tags:       extractTags(summaryText),
+	}
+}
+
+// IndexSummary embeds and upserts a session summary asynchronously.
+func (w *WriteHandler) IndexSummary(sessionKey, summaryText string) {
+	go func() {
+		chunk := w.BuildSummaryChunk(sessionKey, summaryText)
+
+		ctx := context.Background()
+		vector, err := w.embedder.EmbedForIndexing(ctx, chunk.Text)
+		if err != nil {
+			logger.WarnCF("memory.writer", "IndexSummary: embed failed", map[string]any{
+				"session": sessionKey,
+				"error":   err.Error(),
+			})
+			return
+		}
+
+		point := QdrantPoint{
+			ID:     chunk.ID,
+			Vector: vector,
+			Payload: QdrantPayload{
+				Text:         chunk.Text,
+				Source:       chunk.Source,
+				SourceType:   chunk.SourceType,
+				ChunkType:    chunk.ChunkType,
+				Importance:   chunk.Importance,
+				AccessCount:  0,
+				CreatedAt:    chunk.CreatedAt.UTC().Format(time.RFC3339),
+				LastAccessed: chunk.CreatedAt.UTC().Format(time.RFC3339),
+				Tags:         chunk.Tags,
+			},
+		}
+
+		if err := w.qdrant.Upsert(ctx, []QdrantPoint{point}); err != nil {
+			logger.WarnCF("memory.writer", "IndexSummary: upsert failed", map[string]any{
+				"session":  sessionKey,
+				"point_id": chunk.ID,
+				"error":    err.Error(),
+			})
+		}
+	}()
+}
+
 // BuildConversationChunk constructs a MemoryChunk from a conversation turn.
 // The text is truncated to 2048 characters. Public for testing.
 func (w *WriteHandler) BuildConversationChunk(userMessage, assistantResponse, chatID string) MemoryChunk {
