@@ -3,6 +3,9 @@ package memory
 import (
 	"strings"
 	"testing"
+
+	"github.com/sipeed/picoclaw/pkg/providers"
+	"github.com/sipeed/picoclaw/pkg/providers/protocoltypes"
 )
 
 func TestBuildConversationChunk(t *testing.T) {
@@ -99,5 +102,58 @@ func TestBuildConversationChunk_DeterministicID(t *testing.T) {
 	// Same content, different chatID → same ID (content-based)
 	if chunk1.ID != chunk2.ID {
 		t.Errorf("expected same ID for same content, got %s vs %s", chunk1.ID, chunk2.ID)
+	}
+}
+
+func TestExtractPairs_PairsUserAssistant(t *testing.T) {
+	messages := []providers.Message{
+		{Role: "user", Content: "What is the MEV bot status?"},
+		{Role: "assistant", Content: "The MEV bot is currently running and profitable. It processed 50 transactions today."},
+		{Role: "user", Content: "ok"},
+		{Role: "assistant", Content: "Let me know if you need anything else."},
+	}
+
+	h := NewWriteHandler(nil, nil)
+	pairs := h.extractPairs(messages)
+
+	// First pair is long enough (>50 chars), second is too short
+	if len(pairs) != 1 {
+		t.Fatalf("expected 1 pair (second too short), got %d", len(pairs))
+	}
+	if !strings.Contains(pairs[0].Text, "MEV bot") {
+		t.Errorf("expected MEV bot in text, got %s", pairs[0].Text)
+	}
+}
+
+func TestExtractPairs_CollapsesToolSequences(t *testing.T) {
+	messages := []providers.Message{
+		{Role: "user", Content: "Check the server logs for errors in the deployment"},
+		{Role: "assistant", Content: "", ToolCalls: []protocoltypes.ToolCall{{ID: "1", Function: &protocoltypes.FunctionCall{Name: "exec"}}}},
+		{Role: "tool", Content: "error: connection timeout", ToolCallID: "1"},
+		{Role: "assistant", Content: "I found a connection timeout error in the deployment logs. The service failed to connect to the database."},
+	}
+
+	h := NewWriteHandler(nil, nil)
+	pairs := h.extractPairs(messages)
+
+	if len(pairs) != 1 {
+		t.Fatalf("expected 1 pair, got %d", len(pairs))
+	}
+	if !strings.Contains(pairs[0].Text, "connection timeout") {
+		t.Errorf("expected final assistant response, got %s", pairs[0].Text)
+	}
+}
+
+func TestExtractPairs_SkipsToolOnlyMessages(t *testing.T) {
+	messages := []providers.Message{
+		{Role: "tool", Content: "some result", ToolCallID: "1"},
+		{Role: "system", Content: "system prompt"},
+	}
+
+	h := NewWriteHandler(nil, nil)
+	pairs := h.extractPairs(messages)
+
+	if len(pairs) != 0 {
+		t.Fatalf("expected 0 pairs for tool/system only messages, got %d", len(pairs))
 	}
 }
