@@ -62,11 +62,11 @@ var conversationNoisePatterns = []string{
 
 ## 3. Change 2: Pre-Summarization Safety Sweep
 
-**File:** `pkg/agent/loop.go` (in `maybeSummarize`)
+**File:** `pkg/agent/loop.go` (in `summarizeSession` — called by `maybeSummarize`)
 
 ### When It Runs
 
-After `maybeSummarize` generates the summary via LLM but before it replaces the session history with `[summary + recent messages]`.
+After `summarizeSession` generates the summary via LLM but before `TruncateHistory` discards old messages.
 
 ### What It Does
 
@@ -76,7 +76,9 @@ After `maybeSummarize` generates the summary via LLM but before it replaces the 
 
 ### Idempotency
 
-Uses deterministic IDs: `GeneratePointID("conversation:{sessionKey}:{turnIndex}", text)`. If the turn was already indexed by the real-time writer, the upsert overwrites with identical data. No duplicates.
+Both the real-time writer and `EnsureIndexed` must produce the same point ID for the same turn content. **Change required:** `BuildConversationChunk` currently uses `GeneratePointID("conversation:{chatID}:{unixNano}", text)` which is timestamp-based and non-reproducible. Change to content-based: `GeneratePointID("conversation", text)`. The text itself (formatted as `User: X\nAssistant: Y`) is the deterministic key. This means identical conversation content always maps to the same Qdrant point ID, and `EnsureIndexed` upserting the same turn is a harmless no-op.
+
+**Note:** This changes the ID scheme for new conversation turns. Existing turns in Qdrant with old timestamp-based IDs won't collide — they'll coexist until pruned by consolidation.
 
 ### Error Handling
 
@@ -85,10 +87,12 @@ Runs synchronously before discarding — we want turns in Qdrant before they're 
 ### New Method
 
 ```go
-func (w *WriteHandler) EnsureIndexed(sessionKey string, messages []providers.Message)
+func (w *WriteHandler) EnsureIndexed(sessionKey string, messages []protocoltypes.Message)
 ```
 
-Iterates through messages, pairs consecutive user+assistant messages (collapsing tool sequences — if assistant has tool_calls, skip until the next assistant with content), applies noise filter, embeds, upserts.
+**New dependency:** `pkg/memory/writer.go` will import `pkg/providers/protocoltypes` for the `Message` type.
+
+Iterates through messages, pairs consecutive user+assistant messages (collapsing tool sequences — if assistant has tool_calls, skip until the next assistant with content), applies noise filter, embeds, upserts. Receives the raw `toSummarize` slice from `summarizeSession` and applies its own filtering (skips tool-role messages, applies noise gate).
 
 ---
 
@@ -168,9 +172,9 @@ All changes are non-blocking — errors are logged, never surface to the user.
 
 | File | Change |
 |------|--------|
-| `pkg/memory/writer.go` | Add noise filtering to `IndexConversationTurn`, add `EnsureIndexed` method, add `IndexSummary` method, add constants |
+| `pkg/memory/writer.go` | Change `BuildConversationChunk` ID to content-based, add noise filtering to `IndexConversationTurn`, add `EnsureIndexed` method, add `IndexSummary` method, add constants, add `protocoltypes` import |
 | `pkg/memory/writer_test.go` | Tests for noise filter, EnsureIndexed, IndexSummary |
-| `pkg/agent/loop.go` | Call `EnsureIndexed` and `IndexSummary` in `maybeSummarize` |
+| `pkg/agent/loop.go` | Call `EnsureIndexed` and `IndexSummary` in `summarizeSession` |
 
 No new files. No config changes. No new types.
 
