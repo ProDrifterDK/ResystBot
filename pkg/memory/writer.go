@@ -3,12 +3,47 @@ package memory
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/logger"
 )
 
 const maxConversationChunkChars = 2048
+
+// MinConversationTurnChars is the minimum combined length of user message + assistant response to index.
+const MinConversationTurnChars = 50
+
+// MinCleanedResponseChars is the minimum response length after noise cleaning to index.
+const MinCleanedResponseChars = 20
+
+// conversationNoisePatterns are line prefixes stripped from assistant responses before indexing.
+var conversationNoisePatterns = []string{
+	"[TOOL_CALL]",
+	"[TOOL_RESULT]",
+	"Calling tool:",
+	"Using tool:",
+}
+
+// cleanResponse strips noise patterns from an assistant response.
+func cleanResponse(response string) string {
+	lines := strings.Split(response, "\n")
+	var cleaned []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		skip := false
+		for _, pattern := range conversationNoisePatterns {
+			if strings.HasPrefix(trimmed, pattern) {
+				skip = true
+				break
+			}
+		}
+		if !skip {
+			cleaned = append(cleaned, line)
+		}
+	}
+	return strings.TrimSpace(strings.Join(cleaned, "\n"))
+}
 
 // WriteHandler indexes new conversation turns into the vector database.
 type WriteHandler struct {
@@ -27,6 +62,15 @@ func NewWriteHandler(embedder *EmbeddingClient, qdrant *QdrantClient) *WriteHand
 // IndexConversationTurn embeds and upserts a conversation turn asynchronously.
 // Errors are logged as warnings; the method never blocks the caller.
 func (w *WriteHandler) IndexConversationTurn(userMessage, assistantResponse, chatID string) {
+	// Filter short/noisy turns
+	if len(userMessage)+len(assistantResponse) < MinConversationTurnChars {
+		return
+	}
+	assistantResponse = cleanResponse(assistantResponse)
+	if len(assistantResponse) < MinCleanedResponseChars {
+		return
+	}
+
 	go func() {
 		chunk := w.BuildConversationChunk(userMessage, assistantResponse, chatID)
 
@@ -77,7 +121,7 @@ func (w *WriteHandler) BuildConversationChunk(userMessage, assistantResponse, ch
 
 	now := time.Now().UTC()
 	source := "conversation"
-	id := GeneratePointID(fmt.Sprintf("conversation:%s:%d", chatID, now.UnixNano()), text)
+	id := GeneratePointID("conversation", text)
 
 	return MemoryChunk{
 		ID:         id,

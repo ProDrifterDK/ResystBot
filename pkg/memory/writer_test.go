@@ -57,3 +57,47 @@ func TestBuildConversationChunk_Truncation(t *testing.T) {
 		t.Errorf("Text not truncated: got %d chars, want ≤2200", len(chunk.Text))
 	}
 }
+
+func TestCleanResponse(t *testing.T) {
+	resp := "Let me check.\n[TOOL_CALL] exec ls\n[TOOL_RESULT] file1 file2\nThe directory contains file1 and file2."
+	cleaned := cleanResponse(resp)
+	if strings.Contains(cleaned, "[TOOL_CALL]") {
+		t.Error("should strip [TOOL_CALL] lines")
+	}
+	if strings.Contains(cleaned, "[TOOL_RESULT]") {
+		t.Error("should strip [TOOL_RESULT] lines")
+	}
+	if !strings.Contains(cleaned, "directory contains") {
+		t.Error("should keep non-noise lines")
+	}
+}
+
+func TestCleanResponse_CallingTool(t *testing.T) {
+	resp := "Calling tool: exec\nUsing tool: read_file\nHere is the result."
+	cleaned := cleanResponse(resp)
+	if strings.Contains(cleaned, "Calling tool") {
+		t.Error("should strip 'Calling tool:' lines")
+	}
+	if !strings.Contains(cleaned, "Here is the result") {
+		t.Error("should keep non-noise lines")
+	}
+}
+
+func TestIndexConversationTurn_SkipsShortTurns(t *testing.T) {
+	h := NewWriteHandler(nil, nil)
+	// This should not panic even with nil clients — it returns before the goroutine
+	h.IndexConversationTurn("hi", "hello", "123")
+	// No crash = success (turn is under 50 chars, skipped before goroutine)
+}
+
+func TestBuildConversationChunk_DeterministicID(t *testing.T) {
+	h := NewWriteHandler(nil, nil)
+
+	chunk1 := h.BuildConversationChunk("What is X?", "X is a thing that does Y.", "chat1")
+	chunk2 := h.BuildConversationChunk("What is X?", "X is a thing that does Y.", "chat2")
+
+	// Same content, different chatID → same ID (content-based)
+	if chunk1.ID != chunk2.ID {
+		t.Errorf("expected same ID for same content, got %s vs %s", chunk1.ID, chunk2.ID)
+	}
+}
