@@ -192,7 +192,7 @@ func agentCmd() {
 		})
 
 	if daemon {
-		daemonMode(agentLoop, msgBus, channel)
+		daemonMode(cfg, agentLoop, msgBus, channel)
 	} else if message != "" {
 		ctx := context.Background()
 		response, err := agentLoop.ProcessDirectWithChannel(ctx, message, sessionKey, channel, chatID)

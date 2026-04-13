@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/agent"
 	"github.com/sipeed/picoclaw/pkg/bus"
+	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/logger"
 )
 
@@ -104,10 +107,107 @@ func (ds *daemonState) cancelAll() {
 	}
 }
 
+// ensureLocalModel checks if the primary model is a local LM Studio model and
+// ensures it's loaded with the configured context window and a 24h TTL.
+func ensureLocalModel(cfg *config.Config) {
+	if len(cfg.ModelList) == 0 {
+		return
+	}
+
+	// Find the model entry matching the default agent model
+	modelName := cfg.Agents.Defaults.GetModelName()
+	var modelCfg *config.ModelConfig
+	for i := range cfg.ModelList {
+		if cfg.ModelList[i].ModelName == modelName {
+			modelCfg = &cfg.ModelList[i]
+			break
+		}
+	}
+	if modelCfg == nil {
+		return
+	}
+
+	// Only bootstrap local LM Studio models
+	if !strings.Contains(modelCfg.APIBase, "127.0.0.1:1234") {
+		return
+	}
+
+	// Find lms CLI — check PATH first, then common locations
+	lmsPath, err := exec.LookPath("lms")
+	if err != nil {
+		home, _ := os.UserHomeDir()
+		candidates := []string{
+			home + "/.lmstudio/bin/lms",
+			"/usr/local/bin/lms",
+		}
+		for _, c := range candidates {
+			if _, err := os.Stat(c); err == nil {
+				lmsPath = c
+				break
+			}
+		}
+		if lmsPath == "" {
+			logger.WarnCF("daemon", "lms CLI not found", nil)
+			return
+		}
+	}
+
+	// Extract the API model identifier (strip protocol prefix like "openai/")
+	_, modelID, found := strings.Cut(modelCfg.Model, "/")
+	if !found {
+		modelID = modelCfg.Model
+	}
+
+	// Ensure LM Studio server is running
+	out, err := exec.Command(lmsPath, "status").CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "ON") {
+		logger.InfoCF("daemon", "Starting LM Studio server", nil)
+		if err := exec.Command(lmsPath, "server", "start").Run(); err != nil {
+			logger.WarnCF("daemon", "Failed to start LM Studio server", map[string]any{"error": err.Error()})
+			return
+		}
+		time.Sleep(3 * time.Second)
+	}
+
+	// Check if model is already loaded
+	out, err = exec.Command(lmsPath, "ps").CombinedOutput()
+	if err == nil && strings.Contains(string(out), modelID) {
+		logger.InfoCF("daemon", "Local model already loaded", map[string]any{"model": modelID})
+		return
+	}
+
+	// Find context window from the default agent config
+	ctxWindow := 32768
+	for _, a := range cfg.Agents.List {
+		if a.Default && a.ContextWindow > 0 {
+			ctxWindow = a.ContextWindow
+			break
+		}
+	}
+	ctxLen := fmt.Sprintf("%d", ctxWindow)
+
+	logger.InfoCF("daemon", "Loading local model", map[string]any{
+		"model":          modelID,
+		"context_length": ctxLen,
+	})
+
+	cmd := exec.Command(lmsPath, "load", modelID, "--context-length", ctxLen, "--ttl", "86400")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		logger.WarnCF("daemon", "Failed to load local model", map[string]any{
+			"model": modelID,
+			"error": err.Error(),
+			"output": string(out),
+		})
+	} else {
+		logger.InfoCF("daemon", "Local model loaded successfully", map[string]any{"model": modelID})
+	}
+}
+
 // daemonMode is the main daemon entry point. It reads JSON-line commands from
 // stdin and dispatches chat processing in goroutines, supporting concurrent
 // chats with per-chat cancellation.
-func daemonMode(agentLoop *agent.AgentLoop, msgBus *bus.MessageBus, channel string) {
+func daemonMode(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.MessageBus, channel string) {
+	ensureLocalModel(cfg)
 	state := newDaemonState()
 
 	// Forward outbound bus messages as {"type":"status"} events so
@@ -192,6 +292,9 @@ func processChat(ctx context.Context, state *daemonState, agentLoop *agent.Agent
 		return
 	}
 	if response != "" {
+		if u := agentLoop.LastUsage; u != nil {
+			response += fmt.Sprintf("\n\n`in:%d out:%d ctx:%d`", u.PromptTokens, u.CompletionTokens, u.TotalTokens)
+		}
 		emitEvent("response", input.ChatID, response)
 	}
 

@@ -41,6 +41,7 @@ type AgentLoop struct {
 	channelManager   *channels.Manager
 	subagentManagers       map[string]*tools.SubagentManager
 	memoryWriter           *memory.WriteHandler
+	LastUsage              *providers.UsageInfo
 	reconsolidationHandler *memory.ReconsolidationHandler
 }
 
@@ -763,10 +764,17 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, agent *AgentInstance, opt
 
 	// 8. Optional: send response via bus — skip if message tool already sent one this round
 	if opts.SendResponse && !al.HasSentMessageInRound() {
+		outContent := finalContent
+		if al.LastUsage != nil {
+			outContent += fmt.Sprintf("\n\n`in:%d out:%d ctx:%d`",
+				al.LastUsage.PromptTokens,
+				al.LastUsage.CompletionTokens,
+				al.LastUsage.TotalTokens)
+		}
 		al.bus.PublishOutbound(bus.OutboundMessage{
 			Channel: opts.Channel,
 			ChatID:  opts.ChatID,
-			Content: finalContent,
+			Content: outContent,
 		})
 	}
 
@@ -963,6 +971,7 @@ func (al *AgentLoop) runLLMIteration(
 		}
 
 		if response.Usage != nil {
+			al.LastUsage = response.Usage
 			logger.InfoCF("agent", "LLM token usage",
 				map[string]any{
 					"agent_id":          agent.ID,
