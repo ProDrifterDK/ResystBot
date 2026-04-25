@@ -981,9 +981,9 @@ func TestFindMatchingBrace(t *testing.T) {
 		{`{"a":"b{c}d"}`, 0, 13}, // braces in strings (simplified matcher)
 	}
 	for _, tt := range tests {
-		got := findMatchingBrace(tt.text, tt.pos)
+		got := FindMatchingBrace(tt.text, tt.pos)
 		if got != tt.want {
-			t.Errorf("findMatchingBrace(%q, %d) = %d, want %d", tt.text, tt.pos, got, tt.want)
+			t.Errorf("FindMatchingBrace(%q, %d) = %d, want %d", tt.text, tt.pos, got, tt.want)
 		}
 	}
 }

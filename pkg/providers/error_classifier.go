@@ -97,6 +97,17 @@ var (
 		rxp(`image exceeds.*mb`),
 	}
 
+	contextOverflowPatterns = []errorPattern{
+		rxp(`n_keep.*n_ctx`),
+		rxp(`context[_ ]length.*exceed`),
+		rxp(`max[_ ]tokens.*exceed`),
+		rxp(`context[_ ]window.*exceed`),
+		rxp(`too many tokens`),
+		rxp(`prompt is too long`),
+		rxp(`requested[_ ]max[_ ]context`),
+		rxp(`exceeds.*maximum.*context`),
+	}
+
 	// Transient HTTP status codes that map to timeout (server-side failures).
 	transientStatusCodes = map[int]bool{
 		500: true, 502: true, 503: true,
@@ -204,6 +215,9 @@ func classifyByMessage(msg string) FailoverReason {
 	}
 	if matchesAny(msg, authPatterns) {
 		return FailoverAuth
+	}
+	if matchesAny(msg, contextOverflowPatterns) {
+		return FailoverContextOverflow
 	}
 	if matchesAny(msg, formatPatterns) {
 		return FailoverFormat

@@ -76,14 +76,16 @@ func ResolveCandidates(cfg ModelConfig, defaultProvider string) []FallbackCandid
 }
 
 // Execute runs the fallback chain for text/chat requests.
-// It tries each candidate in order, respecting cooldowns and error classification.
+// It tries each candidate in order, respecting per-model cooldowns and error classification.
 //
 // Behavior:
+//   - Cooldown is tracked per provider/model pair, so different models under the
+//     same provider have independent cooldown states.
 //   - Candidates in cooldown are skipped (logged as skipped attempt).
 //   - context.Canceled aborts immediately (user abort, no fallback).
 //   - Non-retriable errors (format) abort immediately.
 //   - Retriable errors trigger fallback to next candidate.
-//   - Success marks provider as good (resets cooldown).
+//   - Success resets cooldown for that provider/model pair.
 //   - If all fail, returns aggregate error with all attempts.
 func (fc *FallbackChain) Execute(
 	ctx context.Context,
@@ -104,9 +106,11 @@ func (fc *FallbackChain) Execute(
 			return nil, context.Canceled
 		}
 
-		// Check cooldown.
-		if !fc.cooldown.IsAvailable(candidate.Provider) {
-			remaining := fc.cooldown.CooldownRemaining(candidate.Provider)
+		// Check cooldown — key by provider/model so different models under
+		// the same provider have independent cooldown states.
+		cooldownKey := ModelKey(candidate.Provider, candidate.Model)
+		if !fc.cooldown.IsAvailable(cooldownKey) {
+			remaining := fc.cooldown.CooldownRemaining(cooldownKey)
 			result.Attempts = append(result.Attempts, FallbackAttempt{
 				Provider: candidate.Provider,
 				Model:    candidate.Model,
@@ -128,7 +132,7 @@ func (fc *FallbackChain) Execute(
 
 		if err == nil {
 			// Success.
-			fc.cooldown.MarkSuccess(candidate.Provider)
+			fc.cooldown.MarkSuccess(cooldownKey)
 			result.Response = resp
 			result.Provider = candidate.Provider
 			result.Model = candidate.Model
@@ -174,7 +178,7 @@ func (fc *FallbackChain) Execute(
 		}
 
 		// Retriable error: mark failure and continue to next candidate.
-		fc.cooldown.MarkFailure(candidate.Provider, failErr.Reason)
+		fc.cooldown.MarkFailure(cooldownKey, failErr.Reason)
 		result.Attempts = append(result.Attempts, FallbackAttempt{
 			Provider: candidate.Provider,
 			Model:    candidate.Model,
@@ -223,8 +227,9 @@ func (fc *FallbackChain) ExecuteWithValidator(
 			return nil, context.Canceled
 		}
 
-		if !fc.cooldown.IsAvailable(candidate.Provider) {
-			remaining := fc.cooldown.CooldownRemaining(candidate.Provider)
+		cooldownKey := ModelKey(candidate.Provider, candidate.Model)
+		if !fc.cooldown.IsAvailable(cooldownKey) {
+			remaining := fc.cooldown.CooldownRemaining(cooldownKey)
 			result.Attempts = append(result.Attempts, FallbackAttempt{
 				Provider: candidate.Provider,
 				Model:    candidate.Model,
@@ -244,7 +249,7 @@ func (fc *FallbackChain) ExecuteWithValidator(
 		elapsed := time.Since(start)
 
 		if err == nil {
-			fc.cooldown.MarkSuccess(candidate.Provider)
+			fc.cooldown.MarkSuccess(cooldownKey)
 
 			if validator != nil && !validator(resp) {
 				logger.WarnCF("fallback", fmt.Sprintf("Provider %s model %s returned unacceptable response, trying next fallback",
@@ -308,7 +313,7 @@ func (fc *FallbackChain) ExecuteWithValidator(
 			return nil, failErr
 		}
 
-		fc.cooldown.MarkFailure(candidate.Provider, failErr.Reason)
+		fc.cooldown.MarkFailure(cooldownKey, failErr.Reason)
 		result.Attempts = append(result.Attempts, FallbackAttempt{
 			Provider: candidate.Provider,
 			Model:    candidate.Model,

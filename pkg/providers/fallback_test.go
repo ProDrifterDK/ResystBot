@@ -157,8 +157,8 @@ func TestFallback_CooldownSkip(t *testing.T) {
 	ct, _ := newTestTracker(now)
 	fc := NewFallbackChain(ct)
 
-	// Put openai in cooldown
-	ct.MarkFailure("openai", FailoverRateLimit)
+	// Put openai/gpt-4 in cooldown using the per-model key
+	ct.MarkFailure(ModelKey("openai", "gpt-4"), FailoverRateLimit)
 
 	candidates := []FallbackCandidate{
 		makeCandidate("openai", "gpt-4"),
@@ -195,9 +195,9 @@ func TestFallback_AllInCooldown(t *testing.T) {
 	ct := NewCooldownTracker()
 	fc := NewFallbackChain(ct)
 
-	// Put all providers in cooldown
-	ct.MarkFailure("openai", FailoverRateLimit)
-	ct.MarkFailure("anthropic", FailoverBilling)
+	// Put all provider/model pairs in cooldown
+	ct.MarkFailure(ModelKey("openai", "gpt-4"), FailoverRateLimit)
+	ct.MarkFailure(ModelKey("anthropic", "claude"), FailoverBilling)
 
 	candidates := []FallbackCandidate{
 		makeCandidate("openai", "gpt-4"),
@@ -278,7 +278,7 @@ func TestFallback_SuccessResetsCooldown(t *testing.T) {
 	run := func(ctx context.Context, provider, model string) (*LLMResponse, error) {
 		attempt++
 		if attempt == 1 {
-			ct.MarkFailure("openai", FailoverRateLimit) // simulate failure tracked elsewhere
+			ct.MarkFailure(ModelKey("openai", "gpt-4"), FailoverRateLimit)
 		}
 		return &LLMResponse{Content: "ok", FinishReason: "stop"}, nil
 	}
@@ -287,7 +287,7 @@ func TestFallback_SuccessResetsCooldown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !ct.IsAvailable("openai") {
+	if !ct.IsAvailable(ModelKey("openai", "gpt-4")) {
 		t.Error("success should reset cooldown")
 	}
 }
@@ -469,5 +469,93 @@ func TestFallbackExhaustedError_Message(t *testing.T) {
 	msg := e.Error()
 	if msg == "" {
 		t.Error("expected non-empty error message")
+	}
+}
+
+// TestFallback_SharedProviderIndependentCooldown reproduces the bug where two
+// models under the same provider (e.g. openai/glm-5.1 and openai/glm-5) shared
+// a single cooldown entry. When the primary failed, the fallback was incorrectly
+// skipped because both used provider="openai" as the cooldown key.
+//
+// With the fix, cooldown is keyed by ModelKey(provider, model) so each model
+// has an independent cooldown state.
+func TestFallback_SharedProviderIndependentCooldown(t *testing.T) {
+	ct := NewCooldownTracker()
+	fc := NewFallbackChain(ct)
+
+	candidates := []FallbackCandidate{
+		makeCandidate("openai", "glm-5.1"),
+		makeCandidate("openai", "glm-5"),
+		makeCandidate("ollama-cloud", "gemini-3-flash-preview"),
+	}
+
+	attempt := 0
+	run := func(ctx context.Context, provider, model string) (*LLMResponse, error) {
+		attempt++
+		if attempt == 1 {
+			return nil, errors.New("rate limit exceeded")
+		}
+		return &LLMResponse{Content: "from fallback", FinishReason: "stop"}, nil
+	}
+
+	result, err := fc.Execute(context.Background(), candidates, run)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The second candidate (openai/glm-5) should have been attempted — NOT skipped.
+	if result.Provider != "openai" || result.Model != "glm-5" {
+		t.Errorf("provider/model = %s/%s, want openai/glm-5", result.Provider, result.Model)
+	}
+	if result.Response.Content != "from fallback" {
+		t.Errorf("content = %q, want 'from fallback'", result.Response.Content)
+	}
+
+	// Verify: only the first model is in cooldown, second model should be fine
+	if ct.IsAvailable(ModelKey("openai", "glm-5.1")) {
+		t.Error("openai/glm-5.1 should be in cooldown after failure")
+	}
+	if !ct.IsAvailable(ModelKey("openai", "glm-5")) {
+		t.Error("openai/glm-5 should be available (success resets cooldown)")
+	}
+}
+
+// TestFallback_SharedProviderCooldownDoesNotCross models verify that putting one
+// model in cooldown doesn't affect another model under the same provider.
+func TestFallback_SharedProviderCooldownDoesNotCrossModels(t *testing.T) {
+	ct := NewCooldownTracker()
+	fc := NewFallbackChain(ct)
+
+	// Put openai/glm-5.1 into cooldown manually
+	ct.MarkFailure(ModelKey("openai", "glm-5.1"), FailoverRateLimit)
+
+	candidates := []FallbackCandidate{
+		makeCandidate("openai", "glm-5.1"),
+		makeCandidate("openai", "glm-5"),
+	}
+
+	run := func(ctx context.Context, provider, model string) (*LLMResponse, error) {
+		if model == "glm-5.1" {
+			t.Error("should not call glm-5.1 (in cooldown)")
+		}
+		return &LLMResponse{Content: "from glm-5", FinishReason: "stop"}, nil
+	}
+
+	result, err := fc.Execute(context.Background(), candidates, run)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Provider != "openai" || result.Model != "glm-5" {
+		t.Errorf("provider/model = %s/%s, want openai/glm-5", result.Provider, result.Model)
+	}
+
+	skipped := 0
+	for _, a := range result.Attempts {
+		if a.Skipped {
+			skipped++
+		}
+	}
+	if skipped != 1 {
+		t.Errorf("skipped = %d, want 1 (only glm-5.1)", skipped)
 	}
 }
