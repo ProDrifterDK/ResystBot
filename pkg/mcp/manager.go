@@ -3,10 +3,12 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	mcpclient "github.com/mark3labs/mcp-go/client"
+	mcptransport "github.com/mark3labs/mcp-go/client/transport"
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/sipeed/picoclaw/pkg/config"
@@ -92,8 +94,10 @@ func (m *Manager) connectServer(ctx context.Context, name string, cfg config.MCP
 		c, err = mcpclient.NewStdioMCPClient(cfg.Command, envSlice, cfg.Args...)
 	case "sse":
 		c, err = mcpclient.NewSSEMCPClient(cfg.URL, mcpclient.WithHeaders(cfg.Headers))
+	case "http":
+		c, err = newHTTPClient(cfg, name)
 	default:
-		return nil, fmt.Errorf("unsupported transport %q (use stdio or sse)", cfg.Transport)
+		return nil, fmt.Errorf("unsupported transport %q (use stdio, sse, or http)", cfg.Transport)
 	}
 
 	if err != nil {
@@ -101,8 +105,28 @@ func (m *Manager) connectServer(ctx context.Context, name string, cfg config.MCP
 	}
 
 	if err := c.Start(connCtx); err != nil {
-		_ = c.Close()
-		return nil, fmt.Errorf("failed to start MCP client for %q: %w", name, err)
+		if handler, ok := extractOAuthHandler(err); ok && cfg.OAuth.Enabled {
+			_ = c.Close()
+			logger.InfoCF("mcp-oauth", "Server requires OAuth authorization", map[string]any{
+				"server": name,
+			})
+
+			if oauthErr := authorizeWithHandler(connCtx, cfg, name, handler); oauthErr != nil {
+				return nil, fmt.Errorf("OAuth authorization failed for %q: %w", name, oauthErr)
+			}
+
+			c, err = newHTTPClient(cfg, name)
+			if err != nil {
+				return nil, fmt.Errorf("failed to recreate MCP client for %q: %w", name, err)
+			}
+			if err := c.Start(connCtx); err != nil {
+				_ = c.Close()
+				return nil, fmt.Errorf("failed to start MCP client after OAuth for %q: %w", name, err)
+			}
+		} else {
+			_ = c.Close()
+			return nil, fmt.Errorf("failed to start MCP client for %q: %w", name, err)
+		}
 	}
 
 	initResult, err := initializeClient(connCtx, c)
@@ -312,4 +336,119 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	}
 
 	return lastErr
+}
+
+// newHTTPClient creates a Streamable HTTP MCP client.
+// When OAuth is enabled, it uses a persistent FileTokenStore and handles
+// the OAuth authorization flow (including PKCE) before starting the client.
+func newHTTPClient(cfg config.MCPServerConfig, serverName string) (*mcpclient.Client, error) {
+	opts := []mcptransport.StreamableHTTPCOption{}
+
+	if len(cfg.Headers) > 0 {
+		opts = append(opts, mcptransport.WithHTTPHeaders(cfg.Headers))
+	}
+
+	if !cfg.OAuth.Enabled {
+		transport, err := mcptransport.NewStreamableHTTP(cfg.URL, opts...)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create HTTP transport: %w", err)
+		}
+		return mcpclient.NewClient(transport), nil
+	}
+
+	tokenStore, err := NewFileTokenStore(serverName)
+	if err != nil {
+		return nil, fmt.Errorf("cannot create token store for %q: %w", serverName, err)
+	}
+
+	redirectURI := cfg.OAuth.RedirectURI
+	if redirectURI == "" {
+		port := cfg.OAuth.CallbackPort
+		if port <= 0 {
+			port = 9876
+		}
+		redirectURI = fmt.Sprintf("http://localhost:%d/callback", port)
+	}
+
+	oauthConfig := mcpclient.OAuthConfig{
+		ClientID:     cfg.OAuth.ClientID,
+		ClientSecret: cfg.OAuth.ClientSecret,
+		RedirectURI:  redirectURI,
+		PKCEEnabled:  true,
+		TokenStore:   tokenStore,
+	}
+
+	if cfg.OAuth.Scopes != "" {
+		oauthConfig.Scopes = strings.Fields(cfg.OAuth.Scopes)
+	}
+
+	client, err := mcpclient.NewOAuthStreamableHttpClient(cfg.URL, oauthConfig, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create OAuth HTTP client: %w", err)
+	}
+
+	return client, nil
+}
+
+func authorizeWithHandler(ctx context.Context, cfg config.MCPServerConfig, serverName string, handler *mcptransport.OAuthHandler) error {
+	if _, err := handler.GetServerMetadata(ctx); err != nil {
+		logger.WarnCF("mcp-oauth", "Server metadata discovery failed", map[string]any{
+			"server": serverName,
+			"error":  err.Error(),
+		})
+	}
+
+	if handler.GetClientID() == "" {
+		logger.InfoCF("mcp-oauth", "Attempting dynamic client registration", map[string]any{
+			"server": serverName,
+		})
+		if err := handler.RegisterClient(ctx, "picoclaw"); err != nil {
+			logger.WarnCF("mcp-oauth", "Dynamic registration failed", map[string]any{
+				"server": serverName,
+				"error":  err.Error(),
+			})
+		}
+	}
+
+	codeVerifier, err := mcptransport.GenerateCodeVerifier()
+	if err != nil {
+		return fmt.Errorf("cannot generate code verifier: %w", err)
+	}
+	codeChallenge := mcptransport.GenerateCodeChallenge(codeVerifier)
+	state, err := mcptransport.GenerateState()
+	if err != nil {
+		return fmt.Errorf("cannot generate state: %w", err)
+	}
+	handler.SetExpectedState(state)
+
+	authURL, err := handler.GetAuthorizationURL(ctx, state, codeChallenge)
+	if err != nil {
+		return fmt.Errorf("cannot build authorization URL: %w", err)
+	}
+
+	cbServer := NewCallbackServer(cfg.OAuth.CallbackPort)
+	if err := cbServer.Start(); err != nil {
+		return fmt.Errorf("cannot start callback server: %w", err)
+	}
+	defer cbServer.Close()
+
+	logger.InfoCF("mcp-oauth", "Open this URL to authorize", map[string]any{
+		"server": serverName,
+		"url":    authURL,
+	})
+
+	result, err := cbServer.WaitForCallback(ctx)
+	if err != nil {
+		return fmt.Errorf("OAuth callback failed: %w", err)
+	}
+
+	if err := handler.ProcessAuthorizationResponse(ctx, result.Code, result.State, codeVerifier); err != nil {
+		return fmt.Errorf("token exchange failed: %w", err)
+	}
+
+	logger.InfoCF("mcp-oauth", "OAuth authorization successful", map[string]any{
+		"server": serverName,
+	})
+
+	return nil
 }
