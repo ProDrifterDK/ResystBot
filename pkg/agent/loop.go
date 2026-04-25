@@ -10,17 +10,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
-	"strings"
-	"sync"
-	"sync/atomic"
-	"time"
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/channels"
 	"github.com/sipeed/picoclaw/pkg/config"
-	"github.com/sipeed/picoclaw/pkg/memory"
 	"github.com/sipeed/picoclaw/pkg/constants"
+	"github.com/sipeed/picoclaw/pkg/hooks"
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/memory"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/routing"
 	"github.com/sipeed/picoclaw/pkg/session"
@@ -28,21 +24,28 @@ import (
 	"github.com/sipeed/picoclaw/pkg/state"
 	"github.com/sipeed/picoclaw/pkg/tools"
 	"github.com/sipeed/picoclaw/pkg/utils"
+	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 )
 
 type AgentLoop struct {
-	bus              *bus.MessageBus
-	cfg              *config.Config
-	registry         *AgentRegistry
-	state            *state.Manager
-	running          atomic.Bool
-	summarizing      sync.Map
-	fallback         *providers.FallbackChain
-	channelManager   *channels.Manager
+	bus                    *bus.MessageBus
+	cfg                    *config.Config
+	registry               *AgentRegistry
+	state                  *state.Manager
+	running                atomic.Bool
+	summarizing            sync.Map
+	fallback               *providers.FallbackChain
+	channelManager         *channels.Manager
 	subagentManagers       map[string]*tools.SubagentManager
 	memoryWriter           *memory.WriteHandler
 	LastUsage              *providers.UsageInfo
+	LastContextEstimate    int
 	reconsolidationHandler *memory.ReconsolidationHandler
+	hookExecutor           *hooks.HookExecutor
 }
 
 // processOptions configures how a message is processed
@@ -59,6 +62,16 @@ type processOptions struct {
 
 func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers.LLMProvider) *AgentLoop {
 	registry := NewAgentRegistry(cfg, provider)
+
+	var hookExecutor *hooks.HookExecutor
+	if !hooks.IsEmpty(&cfg.Hooks) {
+		hookExecutor = hooks.NewHookExecutor(&cfg.Hooks)
+		for _, agentID := range registry.ListAgentIDs() {
+			if agent, ok := registry.GetAgent(agentID); ok {
+				agent.Tools.SetHookExecutor(hookExecutor)
+			}
+		}
+	}
 
 	// Register shared tools to all agents
 	subagentManagers := registerSharedTools(cfg, msgBus, registry, provider)
@@ -82,6 +95,7 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 		summarizing:      sync.Map{},
 		fallback:         fallbackChain,
 		subagentManagers: subagentManagers,
+		hookExecutor:     hookExecutor,
 	}
 
 	// Initialize memory write pipeline
@@ -144,6 +158,7 @@ func registerSharedTools(
 			DuckDuckGoMaxResults: cfg.Tools.Web.DuckDuckGo.MaxResults,
 			DuckDuckGoEnabled:    cfg.Tools.Web.DuckDuckGo.Enabled,
 			PerplexityAPIKey:     cfg.Tools.Web.Perplexity.APIKey,
+			PerplexityModel:      cfg.Tools.Web.Perplexity.Model,
 			PerplexityMaxResults: cfg.Tools.Web.Perplexity.MaxResults,
 			PerplexityEnabled:    cfg.Tools.Web.Perplexity.Enabled,
 			SearXNGEnabled:       cfg.Tools.Web.SearXNG.Enabled,
@@ -161,11 +176,12 @@ func registerSharedTools(
 
 		// Message tool
 		messageTool := tools.NewMessageTool()
-		messageTool.SetSendCallback(func(channel, chatID, content string) error {
+		messageTool.SetSendCallback(func(channel, chatID, content string, filePath string) error {
 			msgBus.PublishOutbound(bus.OutboundMessage{
-				Channel: channel,
-				ChatID:  chatID,
-				Content: content,
+				Channel:  channel,
+				ChatID:   chatID,
+				Content:  content,
+				FilePath: filePath,
 			})
 			return nil
 		})
@@ -368,6 +384,9 @@ func (al *AgentLoop) DrainInbound(ctx context.Context, channel, chatID string) {
 
 func (al *AgentLoop) Run(ctx context.Context) error {
 	al.running.Store(true)
+
+	// Clean up orphaned background processes from previous sessions
+	tools.BgCleanOrphans()
 
 	for al.running.Load() {
 		select {
@@ -696,8 +715,25 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, agent *AgentInstance, opt
 		}
 	}
 
+	// 0b. Run SessionStart hooks (inject context into first interaction of session)
+	var hookContext string
+	if al.hookExecutor != nil {
+		sessionID := fmt.Sprintf("%s:%s", opts.Channel, opts.ChatID)
+		hookContext = al.hookExecutor.RunSessionStart(ctx, sessionID)
+
+		if !opts.NoHistory && opts.UserMessage != "" {
+			opts.UserMessage = al.hookExecutor.RunUserPromptSubmit(ctx, opts.UserMessage, sessionID)
+		}
+	}
+
 	// 1. Update tool contexts
 	al.updateToolContexts(agent, opts.Channel, opts.ChatID)
+
+	// 1b. Inject hook context into user message if present
+	userMsg := opts.UserMessage
+	if hookContext != "" {
+		userMsg = hookContext + "\n\n" + userMsg
+	}
 
 	// 2. Build messages (skip history for heartbeat)
 	var history []providers.Message
@@ -710,13 +746,13 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, agent *AgentInstance, opt
 		ctx,
 		history,
 		summary,
-		opts.UserMessage,
+		userMsg,
 		nil,
 		opts.Channel,
 		opts.ChatID,
 	)
 
-	// 3. Save user message to session
+	// 3. Save user message to session (original, not modified by hooks)
 	agent.Sessions.AddMessage(opts.SessionKey, "user", opts.UserMessage)
 
 	// 4. Run LLM iteration loop
@@ -762,6 +798,11 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, agent *AgentInstance, opt
 		al.maybeSummarize(agent, opts.SessionKey, opts.Channel, opts.ChatID)
 	}
 
+	// Update context estimate from session history
+	if history := agent.Sessions.GetHistory(opts.SessionKey); len(history) > 0 {
+		al.LastContextEstimate = al.estimateTokens(history)
+	}
+
 	// 8. Optional: send response via bus — skip if message tool already sent one this round
 	if opts.SendResponse && !al.HasSentMessageInRound() {
 		outContent := finalContent
@@ -769,7 +810,7 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, agent *AgentInstance, opt
 			outContent += fmt.Sprintf("\n\n`in:%d out:%d ctx:%d`",
 				al.LastUsage.PromptTokens,
 				al.LastUsage.CompletionTokens,
-				al.LastUsage.TotalTokens)
+				al.LastContextEstimate)
 		}
 		al.bus.PublishOutbound(bus.OutboundMessage{
 			Channel: opts.Channel,
@@ -897,10 +938,16 @@ func (al *AgentLoop) runLLMIteration(
 			}
 
 			errMsg := strings.ToLower(err.Error())
-			isContextError := strings.Contains(errMsg, "token") ||
-				strings.Contains(errMsg, "context") ||
+			isContextError := strings.Contains(errMsg, "context_length") ||
+				strings.Contains(errMsg, "context window") ||
+				strings.Contains(errMsg, "n_ctx") ||
+				strings.Contains(errMsg, "n_keep") ||
+				strings.Contains(errMsg, "max_tokens") ||
+				strings.Contains(errMsg, "too many tokens") ||
+				strings.Contains(errMsg, "prompt is too long") ||
 				strings.Contains(errMsg, "invalidparameter") ||
-				strings.Contains(errMsg, "length")
+				strings.Contains(errMsg, "requested_max_context") ||
+				strings.Contains(errMsg, "exceeds maximum context")
 
 			isToolCallIDError := strings.Contains(errMsg, "tool_call_id") ||
 				strings.Contains(errMsg, "tool_calls") ||
@@ -988,12 +1035,12 @@ func (al *AgentLoop) runLLMIteration(
 			parsedXMLCalls := al.extractXMLToolCalls(response.Content, providerToolDefs)
 			if len(parsedXMLCalls) > 0 {
 				response.ToolCalls = parsedXMLCalls
-				
+
 				// Strip the XML tags out so the user doesn't see them
 				for _, call := range parsedXMLCalls {
 					xmlTagStart := fmt.Sprintf("<%s>", call.Name)
 					xmlTagEnd := fmt.Sprintf("</%s>", call.Name)
-					
+
 					startIdx := strings.Index(response.Content, xmlTagStart)
 					if startIdx != -1 {
 						endIdx := strings.Index(response.Content[startIdx:], xmlTagEnd)
@@ -1004,7 +1051,7 @@ func (al *AgentLoop) runLLMIteration(
 					}
 				}
 				response.Content = strings.TrimSpace(response.Content)
-				
+
 				logger.InfoCF("agent", "Recovered XML tool calls using fallback parser",
 					map[string]any{"count": len(parsedXMLCalls)})
 			} else {
@@ -1048,52 +1095,42 @@ func (al *AgentLoop) runLLMIteration(
 			}
 		}
 
-		normalizedToolCalls := make([]providers.ToolCall, 0, len(response.ToolCalls))
-		for _, tc := range response.ToolCalls {
-			normalizedToolCalls = append(normalizedToolCalls, providers.NormalizeToolCall(tc))
+		normalizedToolCalls := tools.NormalizeToolCalls(response.ToolCalls)
+
+		maxTC := agent.MaxToolCallsPerIter
+		if maxTC <= 0 {
+			maxTC = 10
+		}
+		if len(normalizedToolCalls) > maxTC {
+			truncated := normalizedToolCalls[maxTC:]
+			var truncatedNames []string
+			for _, tc := range truncated {
+				truncatedNames = append(truncatedNames, tc.Name)
+			}
+			logger.WarnCF("agent", fmt.Sprintf("Truncated %d/%d tool calls (limit: %d). Dropped: %v",
+				len(truncated), len(normalizedToolCalls), maxTC, truncatedNames),
+				map[string]any{"agent_id": agent.ID, "iteration": iteration})
+			normalizedToolCalls = normalizedToolCalls[:maxTC]
+			messages = append(messages, providers.Message{
+				Role:    "user",
+				Content: fmt.Sprintf("[System: You requested %d tool calls but the per-iteration limit is %d. The following were dropped: %v. Prioritize your most important tools and try again.]", len(response.ToolCalls), maxTC, truncatedNames),
+			})
 		}
 
-		// Log tool calls
-		toolNames := make([]string, 0, len(normalizedToolCalls))
-		for _, tc := range normalizedToolCalls {
-			toolNames = append(toolNames, tc.Name)
-		}
 		logger.InfoCF("agent", "LLM requested tool calls",
 			map[string]any{
 				"agent_id":  agent.ID,
-				"tools":     toolNames,
+				"tools":     tools.ToolCallLogNames(normalizedToolCalls),
 				"count":     len(normalizedToolCalls),
 				"iteration": iteration,
 			})
 
-		// Build assistant message with tool calls
-		assistantMsg := providers.Message{
-			Role:             "assistant",
-			Content:          response.Content,
-			ReasoningContent: response.ReasoningContent,
-			ReasoningDetails: response.ReasoningDetails,
+		assistantMsg := tools.BuildAssistantMessage(response.Content, normalizedToolCalls)
+		if response.ReasoningContent != "" {
+			assistantMsg.ReasoningContent = response.ReasoningContent
 		}
-		for _, tc := range normalizedToolCalls {
-			argumentsJSON, _ := json.Marshal(tc.Arguments)
-			// Copy ExtraContent to ensure thought_signature is persisted for Gemini 3
-			extraContent := tc.ExtraContent
-			thoughtSignature := ""
-			if tc.Function != nil {
-				thoughtSignature = tc.Function.ThoughtSignature
-			}
-
-			assistantMsg.ToolCalls = append(assistantMsg.ToolCalls, providers.ToolCall{
-				ID:   tc.ID,
-				Type: "function",
-				Name: tc.Name,
-				Function: &providers.FunctionCall{
-					Name:             tc.Name,
-					Arguments:        string(argumentsJSON),
-					ThoughtSignature: thoughtSignature,
-				},
-				ExtraContent:     extraContent,
-				ThoughtSignature: thoughtSignature,
-			})
+		if response.ReasoningDetails != nil {
+			assistantMsg.ReasoningDetails = response.ReasoningDetails
 		}
 		messages = append(messages, assistantMsg)
 
@@ -1102,9 +1139,8 @@ func (al *AgentLoop) runLLMIteration(
 
 		// Execute tool calls
 		for _, tc := range normalizedToolCalls {
-			argsJSON, _ := json.Marshal(tc.Arguments)
-			argsPreview := utils.Truncate(string(argsJSON), 200)
-			logger.InfoCF("agent", fmt.Sprintf("Tool call: %s(%s)", tc.Name, argsPreview),
+			argsPreview := tools.FormatToolCallPreview(tc)
+			logger.InfoCF("agent", fmt.Sprintf("Tool call: %s", argsPreview),
 				map[string]any{
 					"agent_id":  agent.ID,
 					"tool":      tc.Name,
@@ -1150,17 +1186,12 @@ func (al *AgentLoop) runLLMIteration(
 					})
 			}
 
-			// Determine content for LLM based on tool result
 			contentForLLM := toolResult.ForLLM
 			if contentForLLM == "" && toolResult.Err != nil {
 				contentForLLM = toolResult.Err.Error()
 			}
 
-			toolResultMsg := providers.Message{
-				Role:       "tool",
-				Content:    contentForLLM,
-				ToolCallID: tc.ID,
-			}
+			toolResultMsg := tools.BuildToolResultMessage(tc.ID, contentForLLM)
 			messages = append(messages, toolResultMsg)
 
 			// Save tool result message to session
@@ -1202,6 +1233,11 @@ func (al *AgentLoop) maybeSummarize(agent *AgentInstance, sessionKey, channel, c
 		if _, loading := al.summarizing.LoadOrStore(summarizeKey, true); !loading {
 			go func() {
 				defer al.summarizing.Delete(summarizeKey)
+				if al.hookExecutor != nil {
+					compactCtx, compactCancel := context.WithTimeout(context.Background(), 10*time.Second)
+					_ = al.hookExecutor.RunPreCompact(compactCtx, sessionKey, fmt.Sprintf("%d tokens estimated", tokenEstimate))
+					compactCancel()
+				}
 				if !constants.IsInternalChannel(channel) {
 					al.bus.PublishOutbound(bus.OutboundMessage{
 						Channel: channel,
@@ -1315,9 +1351,12 @@ func (al *AgentLoop) forceCompression(agent *AgentInstance, sessionKey string) {
 		return
 	}
 
-	// Keep system prompt (usually [0]) and the very last message (user's trigger)
-	// We want to drop the oldest half of the *conversation*
-	// Assuming [0] is system, [1:] is conversation
+	if al.hookExecutor != nil {
+		compactCtx, compactCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_ = al.hookExecutor.RunPreCompact(compactCtx, sessionKey, fmt.Sprintf("%d messages", len(history)))
+		compactCancel()
+	}
+
 	conversation := history[1 : len(history)-1]
 	if len(conversation) == 0 {
 		return
@@ -1342,19 +1381,20 @@ func (al *AgentLoop) forceCompression(agent *AgentInstance, sessionKey string) {
 	// 3. Last message
 
 	droppedCount := mid
+	toDrop := conversation[:mid]
 	keptConversation := conversation[mid:]
 
-	newHistory := make([]providers.Message, 0)
+	summaryText := al.trySummarizeForCompression(agent, toDrop)
 
-	// Append compression note to the original system prompt instead of adding a new system message
-	// This avoids having two consecutive system messages which some APIs (like Zhipu) reject
-	compressionNote := fmt.Sprintf(
-		"\n\n[System Note: Emergency compression dropped %d oldest messages due to context limit]",
-		droppedCount,
-	)
-	enhancedSystemPrompt := history[0]
-	enhancedSystemPrompt.Content = enhancedSystemPrompt.Content + compressionNote
-	newHistory = append(newHistory, enhancedSystemPrompt)
+	newHistory := make([]providers.Message, 0)
+	newHistory = append(newHistory, history[0]) // System prompt
+
+	if summaryText != "" {
+		newHistory = append(newHistory, providers.Message{
+			Role:    "user",
+			Content: fmt.Sprintf("[Context Summary — %d earlier messages compressed]\n%s", len(toDrop), summaryText),
+		})
+	}
 
 	newHistory = append(newHistory, keptConversation...)
 	newHistory = append(newHistory, history[len(history)-1]) // Last message
@@ -1366,11 +1406,47 @@ func (al *AgentLoop) forceCompression(agent *AgentInstance, sessionKey string) {
 	agent.Sessions.SetHistory(sessionKey, newHistory)
 	agent.Sessions.Save(sessionKey)
 
-	logger.WarnCF("agent", "Forced compression executed", map[string]any{
+	logFields := map[string]any{
 		"session_key":  sessionKey,
 		"dropped_msgs": droppedCount,
 		"new_count":    len(newHistory),
-	})
+		"summarized":   summaryText != "",
+	}
+	logger.WarnCF("agent", "Forced compression executed", logFields)
+}
+
+// trySummarizeForCompression attempts to summarize messages that would be dropped
+// during force compression. Returns empty string if summarization fails or is not possible.
+func (al *AgentLoop) trySummarizeForCompression(agent *AgentInstance, toDrop []providers.Message) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	maxMsgTokens := agent.ContextWindow / 2
+	validMessages := make([]providers.Message, 0, len(toDrop))
+	for _, m := range toDrop {
+		if m.Role != "user" && m.Role != "assistant" {
+			continue
+		}
+		if len(m.Content)/2 > maxMsgTokens {
+			continue
+		}
+		validMessages = append(validMessages, m)
+	}
+
+	if len(validMessages) == 0 {
+		return ""
+	}
+
+	if len(validMessages) > 10 {
+		validMessages = validMessages[len(validMessages)-10:]
+	}
+
+	summary, err := al.summarizeBatch(ctx, agent, validMessages, "")
+	if err != nil {
+		return ""
+	}
+
+	return summary
 }
 
 // HasSentMessageInRound checks if the message tool sent a message during the current round.
@@ -1738,16 +1814,16 @@ func extractParentPeer(msg bus.InboundMessage) *routing.RoutePeer {
 
 func (al *AgentLoop) extractXMLToolCalls(content string, defs []providers.ToolDefinition) []providers.ToolCall {
 	var result []providers.ToolCall
-	
+
 	for _, def := range defs {
 		toolName := strings.TrimSpace(def.Function.Name)
 		if toolName == "" {
 			continue
 		}
-		
+
 		startTag := fmt.Sprintf("<%s>", toolName)
 		endTag := fmt.Sprintf("</%s>", toolName)
-		
+
 		for {
 			startIdx := strings.Index(content, startTag)
 			if startIdx == -1 {
@@ -1758,20 +1834,20 @@ func (al *AgentLoop) extractXMLToolCalls(content string, defs []providers.ToolDe
 				break
 			}
 			endIdx += startIdx + len(endTag)
-			
+
 			block := content[startIdx:endIdx]
-			
+
 			// Replace found block with padding spaces to avoid infinite loops across multiple identical calls
 			content = content[:startIdx] + strings.Repeat(" ", endIdx-startIdx) + content[endIdx:]
-			
+
 			args := make(map[string]any)
-			
+
 			// Try to automatically detect internal arguments block
 			if props, ok := def.Function.Parameters["properties"].(map[string]any); ok {
 				for argName := range props {
 					argStartTag := fmt.Sprintf("<%s>", argName)
 					argEndTag := fmt.Sprintf("</%s>", argName)
-					
+
 					aStart := strings.Index(block, argStartTag)
 					aEnd := strings.Index(block, argEndTag)
 					if aStart != -1 && aEnd != -1 && aStart < aEnd {
@@ -1779,12 +1855,12 @@ func (al *AgentLoop) extractXMLToolCalls(content string, defs []providers.ToolDe
 					}
 				}
 			}
-			
+
 			// Some models might just put the raw text straight inside the tool tag without named arg wrappers
 			// e.g. `<message>Hello</message>` instead of `<message><text>Hello</text></message>`
 			if len(args) == 0 {
 				innerContent := strings.TrimSpace(block[len(startTag) : len(block)-len(endTag)])
-				
+
 				// Try to guess which property it belongs to (e.g., "command" for exec, "text" for message)
 				if props, ok := def.Function.Parameters["properties"].(map[string]any); ok && len(props) == 1 {
 					for argName := range props {
@@ -1792,7 +1868,7 @@ func (al *AgentLoop) extractXMLToolCalls(content string, defs []providers.ToolDe
 					}
 				}
 			}
-			
+
 			argsJSON, _ := json.Marshal(args)
 			result = append(result, providers.ToolCall{
 				ID:   fmt.Sprintf("call_xml_%d_%s", time.Now().UnixNano(), toolName),
@@ -1806,6 +1882,6 @@ func (al *AgentLoop) extractXMLToolCalls(content string, defs []providers.ToolDe
 			})
 		}
 	}
-	
+
 	return result
 }

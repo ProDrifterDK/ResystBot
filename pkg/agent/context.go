@@ -223,6 +223,11 @@ func (cb *ContextBuilder) BuildMessages(
 		systemPrompt += fmt.Sprintf("\n\n## Current Session\nChannel: %s\nChat ID: %s", channel, chatID)
 	}
 
+	// Inject pending TeamForge inbox notifications
+	if tfInbox := ReadTeamForgeInbox(); tfInbox != "" {
+		systemPrompt += "\n\n" + tfInbox
+	}
+
 	// Log system prompt summary for debugging (debug mode only)
 	logger.DebugCF("agent", "System prompt built",
 		map[string]any{

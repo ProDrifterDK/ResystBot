@@ -23,7 +23,8 @@ type AgentInstance struct {
 	Model           string
 	Fallbacks       []string
 	Workspace       string
-	MaxIterations   int
+	MaxIterations      int
+	MaxToolCallsPerIter int
 	MaxTokens       int
 	Temperature     float64
 	ContextWindow   int
