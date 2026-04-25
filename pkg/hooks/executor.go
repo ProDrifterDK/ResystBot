@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
-	"syscall"
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/config"
@@ -210,7 +209,7 @@ func (e *HookExecutor) runCommand(ctx context.Context, command string, input *Ho
 	defer cancel()
 
 	cmd := exec.CommandContext(hookCtx, "sh", "-c", command)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	prepareHookCmd(cmd)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -227,7 +226,7 @@ func (e *HookExecutor) runCommand(ctx context.Context, command string, input *Ho
 
 	go func() {
 		<-hookCtx.Done()
-		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		killHookProcessTree(cmd)
 	}()
 
 	inputJSON, err := json.Marshal(input)

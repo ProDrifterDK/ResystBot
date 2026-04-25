@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -95,7 +94,7 @@ func (t *bgProcessTracker) cleanOrphans() []string {
 
 	for _, e := range entries {
 		proc, _ := os.FindProcess(e.PID)
-		if proc != nil && proc.Signal(syscall.Signal(0)) == nil {
+		if proc != nil && proc.Signal(signalCheck()) == nil {
 			alive = append(alive, e)
 		} else {
 			killed = append(killed, fmt.Sprintf("PID %d (%s) — dead, removing from registry", e.PID, e.Command))
@@ -156,7 +155,7 @@ func FormatBgList(entries []BgProcess) string {
 	for _, e := range entries {
 		proc, _ := os.FindProcess(e.PID)
 		status := "dead"
-		if proc != nil && proc.Signal(syscall.Signal(0)) == nil {
+		if proc != nil && proc.Signal(signalCheck()) == nil {
 			status = "running"
 		}
 		age := time.Since(e.StartedAt).Truncate(time.Second)
@@ -179,13 +178,13 @@ func killBgProcess(pidStr string) string {
 		return fmt.Sprintf("PID %d not found", pid)
 	}
 
-	if err := proc.Signal(syscall.Signal(0)); err != nil {
+	if err := proc.Signal(signalCheck()); err != nil {
 		BgRemove(pid)
 		return fmt.Sprintf("PID %d is already dead, removed from registry", pid)
 	}
 
-	if err := proc.Signal(syscall.SIGTERM); err != nil {
-		proc.Signal(syscall.SIGKILL)
+	if err := proc.Signal(sigTerm()); err != nil {
+		proc.Signal(sigKill())
 	}
 
 	BgRemove(pid)
