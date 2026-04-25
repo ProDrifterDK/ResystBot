@@ -24,7 +24,9 @@ import (
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/state"
+	sdnotify "github.com/okzk/sdnotify"
 	"github.com/sipeed/picoclaw/pkg/tools"
+	"github.com/sipeed/picoclaw/pkg/transport"
 	"github.com/sipeed/picoclaw/pkg/voice"
 )
 
@@ -204,6 +206,18 @@ func gatewayCmd() {
 	}()
 	fmt.Printf("✓ Health endpoints available at http://%s:%d/health and /ready\n", cfg.Gateway.Host, cfg.Gateway.Port)
 
+	if cfg.Gateway.TransportPort > 0 {
+		transportServer := transport.NewServer(agentLoop, msgBus, "telegram", cfg.Gateway.Host, cfg.Gateway.TransportPort)
+		go func() {
+			if err := transportServer.Start(); err != nil && err != http.ErrServerClosed {
+				logger.ErrorCF("transport", "Transport server error", map[string]any{"error": err.Error()})
+			}
+		}()
+		fmt.Printf("✓ Transport endpoints at http://%s:%d/v1/\n", cfg.Gateway.Host, cfg.Gateway.TransportPort)
+	}
+
+	go watchdogLoop(ctx)
+
 	go agentLoop.Run(ctx)
 
 	sigChan := make(chan os.Signal, 1)
@@ -248,4 +262,21 @@ func setupCronTool(
 	})
 
 	return cronService
+}
+
+func watchdogLoop(ctx context.Context) {
+	_ = sdnotify.SdNotify("READY=1")
+
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			_ = sdnotify.SdNotify("WATCHDOG=1")
+		case <-ctx.Done():
+			_ = sdnotify.SdNotify("STOPPING=1")
+			return
+		}
+	}
 }
