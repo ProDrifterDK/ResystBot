@@ -52,12 +52,31 @@ type Config struct {
 	Session   SessionConfig   `json:"session,omitempty"`
 	Channels  ChannelsConfig  `json:"channels"`
 	Providers ProvidersConfig `json:"providers,omitempty"`
-	ModelList []ModelConfig   `json:"model_list"` // New model-centric provider configuration
+	ModelList []ModelConfig   `json:"model_list"`
 	Gateway   GatewayConfig   `json:"gateway"`
 	Tools     ToolsConfig     `json:"tools"`
 	Memory    MemoryConfig    `json:"memory,omitempty"`
 	Heartbeat HeartbeatConfig `json:"heartbeat"`
 	Devices   DevicesConfig   `json:"devices"`
+	Hooks     HooksConfig     `json:"hooks,omitempty"`
+}
+
+type HooksConfig struct {
+	PreToolUse       []HookMatcher `json:"PreToolUse,omitempty"`
+	PostToolUse      []HookMatcher `json:"PostToolUse,omitempty"`
+	SessionStart     []HookMatcher `json:"SessionStart,omitempty"`
+	PreCompact       []HookMatcher `json:"PreCompact,omitempty"`
+	UserPromptSubmit []HookMatcher `json:"UserPromptSubmit,omitempty"`
+}
+
+type HookMatcher struct {
+	Matcher string       `json:"matcher"`
+	Hooks   []HookEntry  `json:"hooks"`
+}
+
+type HookEntry struct {
+	Type    string `json:"type"`
+	Command string `json:"command"`
 }
 
 // MarshalJSON implements custom JSON marshaling for Config
@@ -428,8 +447,9 @@ func (c *ModelConfig) Validate() error {
 }
 
 type GatewayConfig struct {
-	Host string `json:"host" env:"PICOCLAW_GATEWAY_HOST"`
-	Port int    `json:"port" env:"PICOCLAW_GATEWAY_PORT"`
+	Host          string `json:"host"           env:"PICOCLAW_GATEWAY_HOST"`
+	Port          int    `json:"port"           env:"PICOCLAW_GATEWAY_PORT"`
+	TransportPort int    `json:"transport_port" env:"PICOCLAW_GATEWAY_TRANSPORT_PORT"`
 }
 
 type BraveConfig struct {
@@ -459,6 +479,7 @@ type SearXNGConfig struct {
 type PerplexityConfig struct {
 	Enabled    bool   `json:"enabled"     env:"PICOCLAW_TOOLS_WEB_PERPLEXITY_ENABLED"`
 	APIKey     string `json:"api_key"     env:"PICOCLAW_TOOLS_WEB_PERPLEXITY_API_KEY"`
+	Model      string `json:"model"       env:"PICOCLAW_TOOLS_WEB_PERPLEXITY_MODEL"`
 	MaxResults int    `json:"max_results" env:"PICOCLAW_TOOLS_WEB_PERPLEXITY_MAX_RESULTS"`
 }
 
@@ -640,6 +661,19 @@ type MCPServerConfig struct {
 	Enabled    *bool             `json:"enabled,omitempty"`
 	Timeout    int               `json:"timeout,omitempty"`
 	MaxRetries int               `json:"max_retries,omitempty"`
+
+	// OAuth configuration for http transport
+	OAuth MCPOAuthConfig `json:"oauth,omitempty"`
+}
+
+// MCPOAuthConfig holds OAuth settings for MCP HTTP servers.
+type MCPOAuthConfig struct {
+	Enabled      bool   `json:"enabled,omitempty"`
+	RedirectURI  string `json:"redirect_uri,omitempty"`  // e.g. "http://localhost:9876/callback"
+	CallbackPort int    `json:"callback_port,omitempty"` // localhost callback server port (default 9876)
+	ClientID     string `json:"client_id,omitempty"`     // pre-registered client ID (optional, uses dynamic registration if empty)
+	ClientSecret string `json:"client_secret,omitempty"` // pre-registered client secret (optional)
+	Scopes       string `json:"scopes,omitempty"`        // space-separated OAuth scopes
 }
 
 // IsEnabled returns whether the server is enabled (defaults to true).
@@ -664,8 +698,12 @@ func (c *MCPServerConfig) Validate() error {
 		if c.URL == "" {
 			return fmt.Errorf("sse transport requires 'url'")
 		}
+	case "http":
+		if c.URL == "" {
+			return fmt.Errorf("http transport requires 'url'")
+		}
 	default:
-		return fmt.Errorf("unsupported transport: %q (use 'stdio' or 'sse')", c.Transport)
+		return fmt.Errorf("unsupported transport: %q (use 'stdio', 'sse', or 'http')", c.Transport)
 	}
 	return nil
 }

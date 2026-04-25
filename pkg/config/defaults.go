@@ -275,8 +275,9 @@ func DefaultConfig() *Config {
 			},
 		},
 		Gateway: GatewayConfig{
-			Host: "127.0.0.1",
-			Port: 18790,
+			Host:          "127.0.0.1",
+			Port:          18790,
+			TransportPort: 9877,
 		},
 		Tools: ToolsConfig{
 			Web: WebToolsConfig{
@@ -294,11 +295,12 @@ func DefaultConfig() *Config {
 					BaseURL:    "http://localhost:8888",
 					MaxResults: 10,
 				},
-				Perplexity: PerplexityConfig{
-					Enabled:    false,
-					APIKey:     "",
-					MaxResults: 5,
-				},
+			Perplexity: PerplexityConfig{
+				Enabled:    false,
+				APIKey:     "",
+				Model:      "sonar",
+				MaxResults: 5,
+			},
 			},
 			Cron: CronToolsConfig{
 				ExecTimeoutMinutes: 5,
