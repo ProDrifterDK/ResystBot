@@ -259,6 +259,7 @@ func (sm *SessionManager) loadSessions() error {
 			continue
 		}
 
+		session.Messages = sanitizeOrphanedToolCalls(session.Messages)
 		sm.sessions[session.Key] = &session
 	}
 
@@ -272,11 +273,70 @@ func (sm *SessionManager) SetHistory(key string, history []providers.Message) {
 
 	session, ok := sm.sessions[key]
 	if ok {
-		// Create a deep copy to strictly isolate internal state
-		// from the caller's slice.
 		msgs := make([]providers.Message, len(history))
 		copy(msgs, history)
 		session.Messages = msgs
 		session.Updated = time.Now()
 	}
+}
+
+// sanitizeOrphanedToolCalls removes orphaned tool call/result pairs from persisted messages.
+// This is the same logic as the runtime sanitizeMessageHistory in the agent loop,
+// but applied at load time to clean up stale session files.
+func sanitizeOrphanedToolCalls(messages []providers.Message) []providers.Message {
+	if len(messages) == 0 {
+		return messages
+	}
+
+	calledIDs := make(map[string]bool)
+	respondedIDs := make(map[string]bool)
+
+	for _, msg := range messages {
+		if msg.Role == "assistant" {
+			for _, tc := range msg.ToolCalls {
+				if tc.ID != "" {
+					calledIDs[tc.ID] = true
+				}
+			}
+		}
+		if msg.Role == "tool" && msg.ToolCallID != "" {
+			respondedIDs[msg.ToolCallID] = true
+		}
+	}
+
+	pairedIDs := make(map[string]bool)
+	for id := range calledIDs {
+		if respondedIDs[id] {
+			pairedIDs[id] = true
+		}
+	}
+
+	sanitized := make([]providers.Message, 0, len(messages))
+	for _, msg := range messages {
+		switch msg.Role {
+		case "tool":
+			if msg.ToolCallID != "" && pairedIDs[msg.ToolCallID] {
+				sanitized = append(sanitized, msg)
+			}
+		case "assistant":
+			if len(msg.ToolCalls) == 0 {
+				sanitized = append(sanitized, msg)
+				continue
+			}
+			validCalls := make([]providers.ToolCall, 0, len(msg.ToolCalls))
+			for _, tc := range msg.ToolCalls {
+				if tc.ID != "" && pairedIDs[tc.ID] {
+					validCalls = append(validCalls, tc)
+				}
+			}
+			if len(validCalls) > 0 || msg.Content != "" {
+				msg.ToolCalls = validCalls
+				sanitized = append(sanitized, msg)
+			}
+		default:
+			sanitized = append(sanitized, msg)
+		}
+	}
+
+	return sanitized
 }

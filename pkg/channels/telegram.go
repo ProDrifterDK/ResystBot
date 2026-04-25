@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -165,6 +166,44 @@ func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) err
 	}
 
 	htmlContent := markdownToTelegramHTML(msg.Content)
+
+	if msg.FilePath != "" {
+		if _, err := os.Stat(msg.FilePath); os.IsNotExist(err) {
+			return fmt.Errorf("file not found: %s", msg.FilePath)
+		}
+
+		file, err := os.Open(msg.FilePath)
+		if err != nil {
+			return fmt.Errorf("failed to open file: %w", err)
+		}
+		defer file.Close()
+
+		ext := strings.ToLower(filepath.Ext(msg.FilePath))
+		isImage := ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".gif" || ext == ".webp"
+
+		caption := msg.FileCaption
+		if caption == "" {
+			caption = msg.Content
+		}
+		caption = markdownToTelegramHTML(caption)
+
+		if isImage {
+			photo := tu.Photo(tu.ID(chatID), tu.File(file))
+			if caption != "" {
+				photo.Caption = caption
+				photo.ParseMode = telego.ModeHTML
+			}
+			_, err = c.bot.SendPhoto(ctx, photo)
+		} else {
+			doc := tu.Document(tu.ID(chatID), tu.File(file))
+			if caption != "" {
+				doc.Caption = caption
+				doc.ParseMode = telego.ModeHTML
+			}
+			_, err = c.bot.SendDocument(ctx, doc)
+		}
+		return err
+	}
 
 	// Try to edit placeholder
 	if pID, ok := c.placeholders.Load(msg.ChatID); ok {

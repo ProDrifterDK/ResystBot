@@ -19,7 +19,7 @@ import (
 
 // daemonInput is a JSON-line message received from tg_listener on stdin.
 type daemonInput struct {
-	Type     string `json:"type"`               // "message", "cancel", "shutdown"
+	Type     string `json:"type"` // "message", "cancel", "shutdown"
 	ChatID   string `json:"chat_id,omitempty"`
 	User     string `json:"user,omitempty"`
 	Username string `json:"username,omitempty"`
@@ -28,9 +28,10 @@ type daemonInput struct {
 
 // daemonEvent is a JSON-line event emitted to tg_listener on stdout.
 type daemonEvent struct {
-	Type   string `json:"type"`              // "ready", "status", "response", "error"
-	ChatID string `json:"chat_id,omitempty"`
-	Text   string `json:"text,omitempty"`
+	Type     string `json:"type"` // "ready", "status", "response", "error"
+	ChatID   string `json:"chat_id,omitempty"`
+	Text     string `json:"text,omitempty"`
+	FilePath string `json:"file_path,omitempty"` // Path to file for sending photos/documents
 }
 
 // emitMu serializes stdout writes from concurrent goroutines.
@@ -38,8 +39,11 @@ var emitMu sync.Mutex
 
 // emitEvent marshals a daemonEvent to JSON and writes it to stdout with a
 // trailing newline, then flushes. Marshal errors are logged to stderr.
-func emitEvent(eventType, chatID, text string) {
+func emitEvent(eventType, chatID, text string, filePath ...string) {
 	e := daemonEvent{Type: eventType, ChatID: chatID, Text: text}
+	if len(filePath) > 0 {
+		e.FilePath = filePath[0]
+	}
 	b, err := json.Marshal(e)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: emitEvent marshal error: %v\n", err)
@@ -107,72 +111,95 @@ func (ds *daemonState) cancelAll() {
 	}
 }
 
-// ensureLocalModel checks if the primary model is a local LM Studio model and
-// ensures it's loaded with the configured context window and a 24h TTL.
-func ensureLocalModel(cfg *config.Config) {
-	if len(cfg.ModelList) == 0 {
-		return
-	}
-
-	// Find the model entry matching the default agent model
-	modelName := cfg.Agents.Defaults.GetModelName()
-	var modelCfg *config.ModelConfig
-	for i := range cfg.ModelList {
-		if cfg.ModelList[i].ModelName == modelName {
-			modelCfg = &cfg.ModelList[i]
-			break
-		}
-	}
-	if modelCfg == nil {
-		return
-	}
-
-	// Only bootstrap local LM Studio models
-	if !strings.Contains(modelCfg.APIBase, "127.0.0.1:1234") {
-		return
-	}
-
-	// Find lms CLI — check PATH first, then common locations
+// findLMStudioCLI locates the lms CLI binary on the system.
+func findLMStudioCLI() string {
 	lmsPath, err := exec.LookPath("lms")
-	if err != nil {
-		home, _ := os.UserHomeDir()
-		candidates := []string{
-			home + "/.lmstudio/bin/lms",
-			"/usr/local/bin/lms",
-		}
-		for _, c := range candidates {
-			if _, err := os.Stat(c); err == nil {
-				lmsPath = c
-				break
-			}
-		}
-		if lmsPath == "" {
-			logger.WarnCF("daemon", "lms CLI not found", nil)
-			return
+	if err == nil {
+		return lmsPath
+	}
+	home, _ := os.UserHomeDir()
+	candidates := []string{
+		home + "/.lmstudio/bin/lms",
+		"/usr/local/bin/lms",
+	}
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			return c
 		}
 	}
+	return ""
+}
 
-	// Extract the API model identifier (strip protocol prefix like "openai/")
-	_, modelID, found := strings.Cut(modelCfg.Model, "/")
-	if !found {
-		modelID = modelCfg.Model
+// ensureLMStudioServer checks if the LM Studio server is running and starts
+// it if necessary. Returns the lms CLI path, or empty string on failure.
+func ensureLMStudioServer(lmsPath string) string {
+	if lmsPath == "" {
+		lmsPath = findLMStudioCLI()
+	}
+	if lmsPath == "" {
+		logger.WarnCF("daemon", "lms CLI not found", nil)
+		return ""
 	}
 
-	// Ensure LM Studio server is running
+	// Check if server is already running
 	out, err := exec.Command(lmsPath, "status").CombinedOutput()
 	if err != nil || !strings.Contains(string(out), "ON") {
 		logger.InfoCF("daemon", "Starting LM Studio server", nil)
 		if err := exec.Command(lmsPath, "server", "start").Run(); err != nil {
 			logger.WarnCF("daemon", "Failed to start LM Studio server", map[string]any{"error": err.Error()})
-			return
+			return ""
 		}
 		time.Sleep(3 * time.Second)
 	}
 
+	return lmsPath
+}
+
+// ensureLocalModel checks if the primary model or the memory embedding model
+// require a local LM Studio server and ensures both are loaded.
+func ensureLocalModel(cfg *config.Config) {
+	lmsPath := ""
+
+	// --- Bootstrap LM Studio for the default agent LLM if needed ---
+	if len(cfg.ModelList) > 0 {
+		modelName := cfg.Agents.Defaults.GetModelName()
+		var modelCfg *config.ModelConfig
+		for i := range cfg.ModelList {
+			if cfg.ModelList[i].ModelName == modelName {
+				modelCfg = &cfg.ModelList[i]
+				break
+			}
+		}
+		if modelCfg != nil && strings.Contains(modelCfg.APIBase, "127.0.0.1:1234") {
+			lmsPath = ensureLMStudioServer(lmsPath)
+			if lmsPath != "" {
+				loadLLMModel(lmsPath, modelCfg.Model, cfg)
+			}
+		}
+	}
+
+	// --- Bootstrap LM Studio for the memory embedding model if needed ---
+	embedURL := cfg.Memory.GetEmbeddingURL()
+	embedModel := cfg.Memory.GetEmbeddingModel()
+	if embedURL != "" && strings.Contains(embedURL, "127.0.0.1:1234") && embedModel != "" {
+		lmsPath = ensureLMStudioServer(lmsPath)
+		if lmsPath != "" {
+			loadEmbeddingModel(lmsPath, embedModel)
+		}
+	}
+}
+
+// loadLLMModel loads a local LLM model via lms with the agent's context window.
+func loadLLMModel(lmsPath, model string, cfg *config.Config) {
+	_, modelID, found := strings.Cut(model, "/")
+	if !found {
+		modelID = model
+	}
+
 	// Check if model is already loaded
-	out, err = exec.Command(lmsPath, "ps").CombinedOutput()
+	out, err := exec.Command(lmsPath, "ps").CombinedOutput()
 	if err == nil && strings.Contains(string(out), modelID) {
-		logger.InfoCF("daemon", "Local model already loaded", map[string]any{"model": modelID})
+		logger.InfoCF("daemon", "Local LLM already loaded", map[string]any{"model": modelID})
 		return
 	}
 
@@ -186,20 +213,43 @@ func ensureLocalModel(cfg *config.Config) {
 	}
 	ctxLen := fmt.Sprintf("%d", ctxWindow)
 
-	logger.InfoCF("daemon", "Loading local model", map[string]any{
+	logger.InfoCF("daemon", "Loading local LLM", map[string]any{
 		"model":          modelID,
 		"context_length": ctxLen,
 	})
 
 	cmd := exec.Command(lmsPath, "load", modelID, "--context-length", ctxLen, "--ttl", "86400")
 	if out, err := cmd.CombinedOutput(); err != nil {
-		logger.WarnCF("daemon", "Failed to load local model", map[string]any{
-			"model": modelID,
-			"error": err.Error(),
+		logger.WarnCF("daemon", "Failed to load local LLM", map[string]any{
+			"model":  modelID,
+			"error":  err.Error(),
 			"output": string(out),
 		})
 	} else {
-		logger.InfoCF("daemon", "Local model loaded successfully", map[string]any{"model": modelID})
+		logger.InfoCF("daemon", "Local LLM loaded successfully", map[string]any{"model": modelID})
+	}
+}
+
+// loadEmbeddingModel loads the memory embedding model via lms.
+func loadEmbeddingModel(lmsPath, embedModel string) {
+	// Check if model is already loaded
+	out, err := exec.Command(lmsPath, "ps").CombinedOutput()
+	if err == nil && strings.Contains(string(out), embedModel) {
+		logger.InfoCF("daemon", "Embedding model already loaded", map[string]any{"model": embedModel})
+		return
+	}
+
+	logger.InfoCF("daemon", "Loading embedding model", map[string]any{"model": embedModel})
+
+	cmd := exec.Command(lmsPath, "load", embedModel, "--ttl", "86400")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		logger.WarnCF("daemon", "Failed to load embedding model", map[string]any{
+			"model":  embedModel,
+			"error":  err.Error(),
+			"output": string(out),
+		})
+	} else {
+		logger.InfoCF("daemon", "Embedding model loaded successfully", map[string]any{"model": embedModel})
 	}
 }
 
@@ -219,7 +269,11 @@ func daemonMode(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.Mess
 			if !ok {
 				return
 			}
-			emitEvent("status", msg.ChatID, msg.Content)
+			if msg.FilePath != "" {
+				emitEvent("file", msg.ChatID, msg.Content, msg.FilePath)
+			} else {
+				emitEvent("status", msg.ChatID, msg.Content)
+			}
 		}
 	}()
 
@@ -293,7 +347,7 @@ func processChat(ctx context.Context, state *daemonState, agentLoop *agent.Agent
 	}
 	if response != "" {
 		if u := agentLoop.LastUsage; u != nil {
-			response += fmt.Sprintf("\n\n`in:%d out:%d ctx:%d`", u.PromptTokens, u.CompletionTokens, u.TotalTokens)
+			response += fmt.Sprintf("\n\n`in:%d out:%d ctx:%d`", u.PromptTokens, u.CompletionTokens, agentLoop.LastContextEstimate)
 		}
 		emitEvent("response", input.ChatID, response)
 	}

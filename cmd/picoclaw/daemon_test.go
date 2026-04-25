@@ -50,6 +50,9 @@ func TestMarshalDaemonEvent_OmitEmpty(t *testing.T) {
 	if _, ok := got["text"]; ok {
 		t.Error("text should be omitted when empty")
 	}
+	if _, ok := got["file_path"]; ok {
+		t.Error("file_path should be omitted when empty")
+	}
 }
 
 func TestParseDaemonInput_Message(t *testing.T) {
