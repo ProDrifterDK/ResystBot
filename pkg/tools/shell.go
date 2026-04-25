@@ -10,7 +10,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/config"
@@ -68,6 +70,9 @@ var defaultDenyPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\bssh\b.*@`),
 	regexp.MustCompile(`\beval\b`),
 	regexp.MustCompile(`\bsource\s+.*\.sh\b`),
+	regexp.MustCompile(`\bsetsid\b`),
+	regexp.MustCompile(`\bnohup\b`),
+	regexp.MustCompile(`\bdisown\b`),
 }
 
 func NewExecTool(workingDir string, restrict bool) *ExecTool {
@@ -144,6 +149,14 @@ func (t *ExecTool) Parameters() map[string]any {
 				"type":        "string",
 				"description": "Optional working directory for the command",
 			},
+			"background": map[string]any{
+				"type":        "boolean",
+				"description": "Run the command as a detached background process. The tool returns immediately with the PID and a log file path. Use this for long-running servers, callbacks, or daemons that should survive after the tool call completes.",
+			},
+			"timeout_seconds": map[string]any{
+				"type":        "number",
+				"description": "Override the default command timeout for this specific command. Use -1 for no timeout, or a positive number in seconds. Useful for long-running commands like builds or compiles.",
+			},
 		},
 		"required": []string{"command"},
 	}
@@ -179,11 +192,27 @@ func (t *ExecTool) Execute(ctx context.Context, args map[string]any) *ToolResult
 		return ErrorResult(guardError)
 	}
 
-	// timeout == 0 means no timeout
+	// Background mode: detached process with setsid, logs to file, returns immediately
+	if bg, _ := args["background"].(bool); bg {
+		return t.executeBackground(command, cwd)
+	}
+
+	timeout := t.timeout
+	if ts, ok := args["timeout_seconds"]; ok {
+		switch v := ts.(type) {
+		case float64:
+			timeout = time.Duration(v) * time.Second
+		case int:
+			timeout = time.Duration(v) * time.Second
+		case int64:
+			timeout = time.Duration(v) * time.Second
+		}
+	}
+
 	var cmdCtx context.Context
 	var cancel context.CancelFunc
-	if t.timeout > 0 {
-		cmdCtx, cancel = context.WithTimeout(ctx, t.timeout)
+	if timeout > 0 {
+		cmdCtx, cancel = context.WithTimeout(ctx, timeout)
 	} else {
 		cmdCtx, cancel = context.WithCancel(ctx)
 	}
@@ -247,7 +276,7 @@ func (t *ExecTool) Execute(ctx context.Context, args map[string]any) *ToolResult
 
 	if err != nil {
 		if errors.Is(cmdCtx.Err(), context.DeadlineExceeded) {
-			msg := fmt.Sprintf("Command timed out after %v", t.timeout)
+			msg := fmt.Sprintf("Command timed out after %v", timeout)
 			return &ToolResult{
 				ForLLM:  msg,
 				ForUser: msg,
@@ -281,9 +310,108 @@ func (t *ExecTool) Execute(ctx context.Context, args map[string]any) *ToolResult
 	}
 }
 
+// executeBackground runs a command as a fully detached background process.
+// It uses setsid to create a new session so the child is not killed when
+// the parent exec call completes. stdout and stderr are redirected to a
+// log file. The tool returns immediately with the PID and log path.
+func (t *ExecTool) executeBackground(command, cwd string) *ToolResult {
+	// Create a log file for capturing output
+	logDir := os.TempDir()
+	logFile, err := os.CreateTemp(logDir, "picoclaw_bg_*.log")
+	if err != nil {
+		return ErrorResult(fmt.Sprintf("failed to create background log file: %v", err))
+	}
+	logPath := logFile.Name()
+	// Close it now — the child will reopen it via shell redirection
+	logFile.Close()
+
+	// Wrap the command to redirect output to the log file.
+	// The shell handles the redirection, so we don't need Go pipes at all.
+	// setsid ensures the child gets its own session and process group.
+	wrappedCmd := fmt.Sprintf(
+		"setsid sh -c %q >%s 2>&1 & echo $!",
+		command, logPath,
+	)
+
+	cmd := exec.Command("sh", "-c", wrappedCmd)
+	if cwd != "" {
+		cmd.Dir = cwd
+	}
+
+	output, err := cmd.Output()
+	if err != nil {
+		// Clean up empty log file on failure
+		os.Remove(logPath)
+		return ErrorResult(fmt.Sprintf("failed to start background command: %v", err))
+	}
+
+	// Parse the PID from setsid output
+	pidStr := strings.TrimSpace(string(output))
+	pid := pidStr
+
+	// Give the process a moment to start, then verify it's alive
+	time.Sleep(100 * time.Millisecond)
+
+	// Quick liveness check
+	var status string
+	if pidInt, parseErr := strconv.Atoi(pid); parseErr == nil {
+		proc, _ := os.FindProcess(pidInt)
+		// On Unix, FindProcess always succeeds; signal 0 checks existence
+		if proc != nil && proc.Signal(syscall.Signal(0)) == nil {
+			status = "running"
+		} else {
+			status = "exited (process may have finished or crashed)"
+		}
+	} else {
+		status = "launched (PID not parseable)"
+	}
+
+	msg := fmt.Sprintf(
+		"Background process started.\nPID: %s\nStatus: %s\nLog file: %s\n\nThe process is fully detached (setsid). Use `cat %s` to check output, or `kill %s` to stop it.",
+		pid, status, logPath, logPath, pid,
+	)
+
+	if pidInt, parseErr := strconv.Atoi(pid); parseErr == nil {
+		BgRegister(pidInt, command, logPath, cwd)
+	}
+
+	return &ToolResult{
+		ForLLM:  msg,
+		ForUser: "",
+		IsError: false,
+	}
+}
+
+var screenshotCommands = []string{
+	"gnome-screenshot",
+	"grim",
+	"scrot",
+	"import ",
+	"flameshot",
+	"screencapture",
+	"xdg-screensaver",
+}
+
+func hasDisplayServer() bool {
+	return os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != ""
+}
+
+func isScreenshotCommand(cmd string) bool {
+	for _, sc := range screenshotCommands {
+		if strings.Contains(cmd, sc) {
+			return true
+		}
+	}
+	return false
+}
+
 func (t *ExecTool) guardCommand(command, cwd string) string {
 	cmd := strings.TrimSpace(command)
 	lower := strings.ToLower(cmd)
+
+	if isScreenshotCommand(lower) && !hasDisplayServer() {
+		return "Command blocked: no display server available (DISPLAY and WAYLAND_DISPLAY not set)"
+	}
 
 	for _, pattern := range t.denyPatterns {
 		if pattern.MatchString(lower) {

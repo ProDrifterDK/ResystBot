@@ -32,12 +32,10 @@ func TestWebTool_WebFetch_Success(t *testing.T) {
 		t.Errorf("Expected success, got IsError=true: %s", result.ForLLM)
 	}
 
-	// ForUser should contain the fetched content
-	if !strings.Contains(result.ForUser, "Test Page") {
-		t.Errorf("Expected ForUser to contain 'Test Page', got: %s", result.ForUser)
+	if !strings.Contains(result.ForLLM, "Test Page") {
+		t.Errorf("Expected ForLLM to contain 'Test Page', got: %s", result.ForLLM)
 	}
 
-	// ForLLM should contain summary
 	if !strings.Contains(result.ForLLM, "bytes") && !strings.Contains(result.ForLLM, "extractor") {
 		t.Errorf("Expected ForLLM to contain summary, got: %s", result.ForLLM)
 	}
@@ -68,9 +66,8 @@ func TestWebTool_WebFetch_JSON(t *testing.T) {
 		t.Errorf("Expected success, got IsError=true: %s", result.ForLLM)
 	}
 
-	// ForUser should contain formatted JSON
-	if !strings.Contains(result.ForUser, "key") && !strings.Contains(result.ForUser, "value") {
-		t.Errorf("Expected ForUser to contain JSON data, got: %s", result.ForUser)
+	if !strings.Contains(result.ForLLM, "key") && !strings.Contains(result.ForLLM, "value") {
+		t.Errorf("Expected ForLLM to contain JSON data, got: %s", result.ForLLM)
 	}
 }
 
@@ -159,18 +156,8 @@ func TestWebTool_WebFetch_Truncation(t *testing.T) {
 		t.Errorf("Expected success, got IsError=true: %s", result.ForLLM)
 	}
 
-	// ForUser should contain truncated content (not the full 20000 chars)
-	resultMap := make(map[string]any)
-	json.Unmarshal([]byte(result.ForUser), &resultMap)
-	if text, ok := resultMap["text"].(string); ok {
-		if len(text) > 1100 { // Allow some margin
-			t.Errorf("Expected content to be truncated to ~1000 chars, got: %d", len(text))
-		}
-	}
-
-	// Should be marked as truncated
-	if truncated, ok := resultMap["truncated"].(bool); !ok || !truncated {
-		t.Errorf("Expected 'truncated' to be true in result")
+	if !strings.Contains(result.ForLLM, "truncated: true") {
+		t.Errorf("Expected 'truncated: true' in result, ForLLM: %s", result.ForLLM[:min(200, len(result.ForLLM))])
 	}
 }
 
@@ -228,14 +215,12 @@ func TestWebTool_WebFetch_HTMLExtraction(t *testing.T) {
 		t.Errorf("Expected success, got IsError=true: %s", result.ForLLM)
 	}
 
-	// ForUser should contain extracted text (without script/style tags)
-	if !strings.Contains(result.ForUser, "Title") && !strings.Contains(result.ForUser, "Content") {
-		t.Errorf("Expected ForUser to contain extracted text, got: %s", result.ForUser)
+	if !strings.Contains(result.ForLLM, "Title") && !strings.Contains(result.ForLLM, "Content") {
+		t.Errorf("Expected ForLLM to contain extracted text, got: %s", result.ForLLM)
 	}
 
-	// Should NOT contain script or style tags
-	if strings.Contains(result.ForUser, "<script>") || strings.Contains(result.ForUser, "<style>") {
-		t.Errorf("Expected script/style tags to be removed, got: %s", result.ForUser)
+	if strings.Contains(result.ForLLM, "<script>") || strings.Contains(result.ForLLM, "<style>") {
+		t.Errorf("Expected script/style tags to be removed, got: %s", result.ForLLM)
 	}
 }
 

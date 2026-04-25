@@ -11,7 +11,21 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"golang.org/x/net/html"
 )
+
+var blockElements = map[string]bool{
+	"p": true, "div": true, "br": true,
+	"h1": true, "h2": true, "h3": true, "h4": true, "h5": true, "h6": true,
+	"li": true, "tr": true, "blockquote": true, "pre": true, "hr": true,
+	"table": true, "ul": true, "ol": true,
+	"header": true, "footer": true, "section": true, "article": true, "nav": true, "aside": true,
+}
+
+var skipElements = map[string]bool{
+	"script": true, "style": true, "noscript": true,
+}
 
 const (
 	userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -301,12 +315,22 @@ func (p *DuckDuckGoSearchProvider) extractResults(html string, count int, query 
 }
 
 func stripTags(content string) string {
-	re := regexp.MustCompile(`<[^>]+>`)
-	return re.ReplaceAllString(content, "")
+	tok := html.NewTokenizer(strings.NewReader(content))
+	var b strings.Builder
+	for {
+		tt := tok.Next()
+		switch tt {
+		case html.ErrorToken:
+			return b.String()
+		case html.TextToken:
+			b.Write(tok.Text())
+		}
+	}
 }
 
 type PerplexitySearchProvider struct {
 	apiKey string
+	model  string
 	proxy  string
 }
 
@@ -314,7 +338,7 @@ func (p *PerplexitySearchProvider) Search(ctx context.Context, query string, cou
 	searchURL := "https://api.perplexity.ai/chat/completions"
 
 	payload := map[string]any{
-		"model": "sonar",
+		"model": p.modelOrDefault(),
 		"messages": []map[string]string{
 			{
 				"role":    "system",
@@ -378,6 +402,13 @@ func (p *PerplexitySearchProvider) Search(ctx context.Context, query string, cou
 	}
 
 	return fmt.Sprintf("Results for: %s (via Perplexity)\n%s", query, searchResp.Choices[0].Message.Content), nil
+}
+
+func (p *PerplexitySearchProvider) modelOrDefault() string {
+	if p.model != "" {
+		return p.model
+	}
+	return "sonar"
 }
 
 type SearXNGSearchProvider struct {
@@ -460,6 +491,7 @@ type WebSearchToolOptions struct {
 	DuckDuckGoMaxResults int
 	DuckDuckGoEnabled    bool
 	PerplexityAPIKey     string
+	PerplexityModel      string
 	PerplexityMaxResults int
 	PerplexityEnabled    bool
 	SearXNGEnabled       bool
@@ -474,7 +506,7 @@ func NewWebSearchTool(opts WebSearchToolOptions) *WebSearchTool {
 
 	// Priority: Perplexity > Brave > Tavily > SearXNG > DuckDuckGo
 	if opts.PerplexityEnabled && opts.PerplexityAPIKey != "" {
-		provider = &PerplexitySearchProvider{apiKey: opts.PerplexityAPIKey, proxy: opts.Proxy}
+		provider = &PerplexitySearchProvider{apiKey: opts.PerplexityAPIKey, model: opts.PerplexityModel, proxy: opts.Proxy}
 		if opts.PerplexityMaxResults > 0 {
 			maxResults = opts.PerplexityMaxResults
 		}
@@ -711,28 +743,75 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 }
 
 func (t *WebFetchTool) extractText(htmlContent string) string {
-	re := regexp.MustCompile(`<script[\s\S]*?</script>`)
-	result := re.ReplaceAllLiteralString(htmlContent, "")
-	re = regexp.MustCompile(`<style[\s\S]*?</style>`)
-	result = re.ReplaceAllLiteralString(result, "")
-	re = regexp.MustCompile(`<[^>]+>`)
-	result = re.ReplaceAllLiteralString(result, "")
+	tok := html.NewTokenizer(strings.NewReader(htmlContent))
+	var b strings.Builder
+	depth := 0
 
-	result = strings.TrimSpace(result)
+	for {
+		tt := tok.Next()
+		switch tt {
+		case html.ErrorToken:
+			goto done
+		case html.StartTagToken, html.SelfClosingTagToken:
+			tn, _ := tok.TagName()
+			name := string(tn)
+			if skipElements[name] {
+				depth++
+			}
+			if blockElements[name] {
+				b.WriteByte('\n')
+			}
+		case html.EndTagToken:
+			tn, _ := tok.TagName()
+			name := string(tn)
+			if skipElements[name] && depth > 0 {
+				depth--
+			}
+			if blockElements[name] {
+				b.WriteByte('\n')
+			}
+		case html.TextToken:
+			if depth > 0 {
+				continue
+			}
+			b.Write(tok.Text())
+		}
+	}
+done:
 
-	re = regexp.MustCompile(`[^\S\n]+`)
-	result = re.ReplaceAllString(result, " ")
-	re = regexp.MustCompile(`\n{3,}`)
-	result = re.ReplaceAllString(result, "\n\n")
+	result := b.String()
+
+	var sb strings.Builder
+	prevSpace := false
+	for _, r := range result {
+		switch {
+		case r == '\n':
+			sb.WriteRune('\n')
+			prevSpace = false
+		case r <= ' ':
+			if !prevSpace {
+				sb.WriteByte(' ')
+				prevSpace = true
+			}
+		default:
+			sb.WriteRune(r)
+			prevSpace = false
+		}
+	}
+	result = sb.String()
+
+	for strings.Contains(result, "\n\n\n") {
+		result = strings.ReplaceAll(result, "\n\n\n", "\n\n")
+	}
 
 	lines := strings.Split(result, "\n")
-	var cleanLines []string
+	var clean []string
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line != "" {
-			cleanLines = append(cleanLines, line)
+			clean = append(clean, line)
 		}
 	}
 
-	return strings.Join(cleanLines, "\n")
+	return strings.Join(clean, "\n")
 }
