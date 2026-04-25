@@ -2,23 +2,40 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
 
+	"github.com/sipeed/picoclaw/pkg/hooks"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
 type ToolRegistry struct {
-	tools map[string]Tool
-	mu    sync.RWMutex
+	tools        map[string]Tool
+	mu           sync.RWMutex
+	hookExecutor *hooks.HookExecutor
 }
 
 func NewToolRegistry() *ToolRegistry {
 	return &ToolRegistry{
 		tools: make(map[string]Tool),
 	}
+}
+
+// SetHookExecutor configures the hooks executor for this registry.
+func (r *ToolRegistry) SetHookExecutor(executor *hooks.HookExecutor) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.hookExecutor = executor
+}
+
+// GetHookExecutor returns the hooks executor (nil-safe for cloned registries).
+func (r *ToolRegistry) GetHookExecutor() *hooks.HookExecutor {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.hookExecutor
 }
 
 func (r *ToolRegistry) Register(tool Tool) {
@@ -63,6 +80,36 @@ func (r *ToolRegistry) ExecuteWithContext(
 		return ErrorResult(fmt.Sprintf("tool %q not found", name)).WithError(fmt.Errorf("tool not found"))
 	}
 
+	sessionID := fmt.Sprintf("%s:%s", channel, chatID)
+
+	hookExec := r.GetHookExecutor()
+	if hookExec != nil {
+		hookResult := hookExec.RunPreToolUse(ctx, name, args, sessionID)
+		switch hookResult.Decision {
+		case hooks.DecisionBlock:
+			logger.InfoCF("tool", "Tool blocked by hook",
+				map[string]any{"tool": name, "reason": hookResult.Reason})
+			return ErrorResult(fmt.Sprintf("Tool %q blocked by hook: %s", name, hookResult.Reason))
+		case hooks.DecisionRedirect:
+			redirectedName := hookResult.ReplacementTool
+			redirectedArgs := hookResult.ReplacementInput
+			if redirectedArgs == nil {
+				redirectedArgs = args
+			}
+			redirectedTool, found := r.Get(redirectedName)
+			if !found {
+				logger.WarnCF("tool", "Hook redirected to unknown tool",
+					map[string]any{"from": name, "to": redirectedName})
+				return ErrorResult(fmt.Sprintf("hook redirected to unknown tool %q", redirectedName))
+			}
+			logger.InfoCF("tool", "Tool redirected by hook",
+				map[string]any{"from": name, "to": redirectedName})
+			tool = redirectedTool
+			name = redirectedName
+			args = redirectedArgs
+		}
+	}
+
 	// If tool implements ContextualTool, set context
 	if contextualTool, ok := tool.(ContextualTool); ok && channel != "" && chatID != "" {
 		contextualTool.SetContext(channel, chatID)
@@ -80,6 +127,11 @@ func (r *ToolRegistry) ExecuteWithContext(
 	start := time.Now()
 	result := tool.Execute(ctx, args)
 	duration := time.Since(start)
+
+	if hookExec != nil {
+		responseBytes, _ := json.Marshal(result.ForLLM)
+		hookExec.RunPostToolUse(ctx, name, args, string(responseBytes), sessionID)
+	}
 
 	// Log based on result type
 	if result.IsError {
@@ -188,7 +240,8 @@ func (r *ToolRegistry) Clone() *ToolRegistry {
 	defer r.mu.RUnlock()
 
 	cloned := &ToolRegistry{
-		tools: make(map[string]Tool, len(r.tools)),
+		tools:        make(map[string]Tool, len(r.tools)),
+		hookExecutor: r.hookExecutor,
 	}
 	for k, v := range r.tools {
 		cloned.tools[k] = v

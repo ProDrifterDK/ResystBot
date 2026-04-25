@@ -8,7 +8,6 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -29,6 +28,7 @@ type ToolLoopConfig struct {
 	Model              string
 	Tools              *ToolRegistry
 	MaxIterations      int
+	MaxToolCallsPerIter int
 	LLMOptions         map[string]any
 	ProgressLogger     ProgressLogger                   // optional; called on each tool call/result/error
 	TaskID             string                           // optional; passed to ProgressLogger
@@ -192,48 +192,41 @@ func RunToolLoop(
 			break
 		}
 
-		normalizedToolCalls := make([]providers.ToolCall, 0, len(response.ToolCalls))
-		for _, tc := range response.ToolCalls {
-			normalizedToolCalls = append(normalizedToolCalls, providers.NormalizeToolCall(tc))
+		normalizedToolCalls := NormalizeToolCalls(response.ToolCalls)
+
+		maxTC := config.MaxToolCallsPerIter
+		if maxTC <= 0 {
+			maxTC = 10
+		}
+		if len(normalizedToolCalls) > maxTC {
+			truncated := normalizedToolCalls[maxTC:]
+			var truncatedNames []string
+			for _, tc := range truncated {
+				truncatedNames = append(truncatedNames, tc.Name)
+			}
+			logger.WarnCF("toolloop", fmt.Sprintf("Truncated %d/%d tool calls (limit: %d). Dropped: %v",
+				len(truncated), len(normalizedToolCalls), maxTC, truncatedNames),
+				map[string]any{"iteration": iteration})
+			normalizedToolCalls = normalizedToolCalls[:maxTC]
+			messages = append(messages, providers.Message{
+				Role:    "user",
+				Content: fmt.Sprintf("[System: You requested %d tool calls but the per-iteration limit is %d. The following were dropped: %v. Prioritize your most important tools and try again.]", len(response.ToolCalls), maxTC, truncatedNames),
+			})
 		}
 
-		// 5. Log tool calls
-		toolNames := make([]string, 0, len(normalizedToolCalls))
-		for _, tc := range normalizedToolCalls {
-			toolNames = append(toolNames, tc.Name)
-		}
 		logger.InfoCF("toolloop", "LLM requested tool calls",
 			map[string]any{
-				"tools":     toolNames,
+				"tools":     ToolCallLogNames(normalizedToolCalls),
 				"count":     len(normalizedToolCalls),
 				"iteration": iteration,
 			})
 
-		// 6. Build assistant message with tool calls
-		assistantMsg := providers.Message{
-			Role:    "assistant",
-			Content: response.Content,
-		}
-		for _, tc := range normalizedToolCalls {
-			argumentsJSON, _ := json.Marshal(tc.Arguments)
-			assistantMsg.ToolCalls = append(assistantMsg.ToolCalls, providers.ToolCall{
-				ID:        tc.ID,
-				Type:      "function",
-				Name:      tc.Name,
-				Arguments: tc.Arguments,
-				Function: &providers.FunctionCall{
-					Name:      tc.Name,
-					Arguments: string(argumentsJSON),
-				},
-			})
-		}
+		assistantMsg := BuildAssistantMessage(response.Content, normalizedToolCalls)
 		messages = append(messages, assistantMsg)
 
-		// 7. Execute tool calls
 		for _, tc := range normalizedToolCalls {
-			argsJSON, _ := json.Marshal(tc.Arguments)
-			argsPreview := utils.Truncate(string(argsJSON), 200)
-			logger.InfoCF("toolloop", fmt.Sprintf("Tool call: %s(%s)", tc.Name, argsPreview),
+			argsPreview := FormatToolCallPreview(tc)
+			logger.InfoCF("toolloop", fmt.Sprintf("Tool call: %s", argsPreview),
 				map[string]any{
 					"tool":      tc.Name,
 					"iteration": iteration,
@@ -241,10 +234,9 @@ func RunToolLoop(
 
 			if config.ProgressLogger != nil {
 				config.ProgressLogger(config.TaskID, config.TaskLabel, "TOOL_CALL",
-					fmt.Sprintf("[iter %d] %s(%s)", iteration, tc.Name, argsPreview))
+					fmt.Sprintf("[iter %d] %s", iteration, argsPreview))
 			}
 
-			// Execute tool (no async callback for subagents - they run independently)
 			var toolResult *ToolResult
 			if config.Tools != nil {
 				toolResult = config.Tools.ExecuteWithContext(ctx, tc.Name, tc.Arguments, channel, chatID, nil)
@@ -252,7 +244,6 @@ func RunToolLoop(
 				toolResult = ErrorResult("No tools available")
 			}
 
-			// Determine content for LLM
 			contentForLLM := toolResult.ForLLM
 			if contentForLLM == "" && toolResult.Err != nil {
 				contentForLLM = toolResult.Err.Error()
@@ -268,13 +259,7 @@ func RunToolLoop(
 					fmt.Sprintf("[iter %d] %s → %s", iteration, tc.Name, resultPreview))
 			}
 
-			// Add tool result message
-			toolResultMsg := providers.Message{
-				Role:       "tool",
-				Content:    contentForLLM,
-				ToolCallID: tc.ID,
-			}
-			messages = append(messages, toolResultMsg)
+			messages = append(messages, BuildToolResultMessage(tc.ID, contentForLLM))
 		}
 	}
 

@@ -6,7 +6,7 @@ import (
 	"sync"
 )
 
-type SendCallback func(channel, chatID, content string) error
+type SendCallback func(channel, chatID, content string, filePath string) error
 
 type MessageTool struct {
 	mu              sync.Mutex
@@ -36,6 +36,10 @@ func (t *MessageTool) Parameters() map[string]any {
 			"content": map[string]any{
 				"type":        "string",
 				"description": "The message content to send",
+			},
+			"file_path": map[string]any{
+				"type":        "string",
+				"description": "Optional: path to a file to send (image, document, etc.)",
 			},
 			"channel": map[string]any{
 				"type":        "string",
@@ -84,6 +88,7 @@ func (t *MessageTool) Execute(ctx context.Context, args map[string]any) *ToolRes
 
 	channel, _ := args["channel"].(string)
 	chatID, _ := args["chat_id"].(string)
+	filePath, _ := args["file_path"].(string)
 
 	if channel == "" {
 		channel = t.defaultChannel
@@ -100,7 +105,7 @@ func (t *MessageTool) Execute(ctx context.Context, args map[string]any) *ToolRes
 		return &ToolResult{ForLLM: "Message sending not configured", IsError: true}
 	}
 
-	if err := t.sendCallback(channel, chatID, content); err != nil {
+	if err := t.sendCallback(channel, chatID, content, filePath); err != nil {
 		return &ToolResult{
 			ForLLM:  fmt.Sprintf("sending message: %v", err),
 			IsError: true,
