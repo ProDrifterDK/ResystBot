@@ -145,6 +145,10 @@ func (t *ExecTool) Parameters() map[string]any {
 				"type":        "string",
 				"description": "The shell command to execute",
 			},
+			"cwd": map[string]any{
+				"type":        "string",
+				"description": "Working directory (alias for working_dir)",
+			},
 			"working_dir": map[string]any{
 				"type":        "string",
 				"description": "Optional working directory for the command",
@@ -169,7 +173,13 @@ func (t *ExecTool) Execute(ctx context.Context, args map[string]any) *ToolResult
 	}
 
 	cwd := t.workingDir
-	if wd, ok := args["working_dir"].(string); ok && wd != "" {
+	wd := ""
+	if alias, ok := args["cwd"].(string); ok && alias != "" {
+		wd = alias
+	} else if explicit, ok := args["working_dir"].(string); ok && explicit != "" {
+		wd = explicit
+	}
+	if wd != "" {
 		if t.restrictToWorkspace && t.workingDir != "" {
 			resolvedWD, err := validatePath(wd, t.workingDir, true)
 			if err != nil {
