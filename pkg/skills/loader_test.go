@@ -3,11 +3,24 @@ package skills
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func testSkillsLoader(t *testing.T, workspace string) *SkillsLoader {
+	t.Helper()
+	sl := NewSkillsLoader(workspace, "", "")
+	sl.workspaceSkills = workspace
+	return sl
+}
+
+func testdataPath(parts ...string) string {
+	base := append([]string{"testdata"}, parts...)
+	return filepath.Join(base...)
+}
 
 func TestSkillsInfoValidate(t *testing.T) {
 	testcases := []struct {
@@ -325,4 +338,72 @@ func TestStripFrontmatter(t *testing.T) {
 			)
 		})
 	}
+}
+
+func TestV2FrontmatterParsing(t *testing.T) {
+	sl := testSkillsLoader(t, testdataPath("v2-skill"))
+	metadata := sl.getSkillMetadata(filepath.Join(testdataPath("v2-skill"), "SKILL.md"))
+	require.NotNil(t, metadata)
+
+	assert.Equal(t, "git-master", metadata.Name)
+	assert.ElementsMatch(t, []string{"commit", "rebase", "git", "merge", "blame", "bisect"}, metadata.Triggers.Keywords)
+	assert.Equal(t, "system_prompt", metadata.Inject.Method)
+	assert.Equal(t, 2000, metadata.Inject.TokenBudget)
+}
+
+func TestBackwardCompatFrontmatter(t *testing.T) {
+	sl := testSkillsLoader(t, testdataPath("legacy-skill"))
+	metadata := sl.getSkillMetadata(filepath.Join(testdataPath("legacy-skill"), "SKILL.md"))
+	require.NotNil(t, metadata)
+
+	assert.Equal(t, "legacy", metadata.Name)
+	assert.Empty(t, metadata.Triggers.Keywords)
+	assert.Empty(t, metadata.Triggers.Tools)
+	assert.Equal(t, []string{"default"}, metadata.Triggers.Agents)
+	assert.Equal(t, "system_prompt", metadata.Inject.Method)
+	assert.Equal(t, "normal", metadata.Inject.Priority)
+	assert.Equal(t, 0, metadata.Inject.TokenBudget)
+	assert.Equal(t, "0.1.0", metadata.Version)
+}
+
+func TestBuildSkillsIndex(t *testing.T) {
+	sl := testSkillsLoader(t, testdataPath("multi-skills"))
+	index := sl.BuildSkillsIndex()
+
+	assert.Contains(t, index, "<available_skills>")
+	assert.Equal(t, 3, strings.Count(index, "  <skill>"))
+	assert.Contains(t, index, "<name>alpha</name>")
+	assert.Contains(t, index, "<name>bravo</name>")
+	assert.Contains(t, index, "<name>charlie</name>")
+	assert.True(t, strings.HasSuffix(strings.TrimSpace(index), `To activate a skill, call: skill(name="skill-name")`))
+}
+
+func TestBuildSkillsIndexEmpty(t *testing.T) {
+	empty := t.TempDir()
+	sl := testSkillsLoader(t, empty)
+
+	assert.Equal(t, "", sl.BuildSkillsIndex())
+}
+
+func TestSkillNameValidation(t *testing.T) {
+	sl := testSkillsLoader(t, testdataPath("bad-name"))
+	metadata := sl.getSkillMetadata(filepath.Join(testdataPath("bad-name"), "SKILL.md"))
+	require.NotNil(t, metadata)
+
+	info := SkillInfo{
+		Name:        metadata.Name,
+		Description: metadata.Description,
+	}
+	err := info.validate()
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "alphanumeric")
+}
+
+func TestTruncateToTokenBudget(t *testing.T) {
+	content := strings.Repeat("abcd", 20) + "\n\n" + strings.Repeat("efgh", 20)
+	truncated := truncateToTokenBudget(content, 20)
+
+	assert.Contains(t, truncated, "[... skill content truncated due to token budget]")
+	assert.Less(t, len(truncated), len(content)+len("\n\n[... skill content truncated due to token budget]"))
+	assert.NotEqual(t, content, truncated)
 }
