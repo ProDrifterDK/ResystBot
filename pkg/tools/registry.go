@@ -110,6 +110,14 @@ func (r *ToolRegistry) ExecuteWithContext(
 		}
 	}
 
+	// Validate arguments against the tool's declared schema.
+	if err := validateToolArgs(tool.Parameters(), args); err != nil {
+		logger.WarnCF("tool", "Tool argument validation failed",
+			map[string]any{"tool": name, "error": err.Error()})
+		return ErrorResult(fmt.Sprintf("invalid arguments for tool %q: %s", name, err)).
+			WithError(fmt.Errorf("argument validation failed: %w", err))
+	}
+
 	// If tool implements ContextualTool, set context
 	if contextualTool, ok := tool.(ContextualTool); ok && channel != "" && chatID != "" {
 		contextualTool.SetContext(channel, chatID)
