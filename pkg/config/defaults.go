@@ -295,12 +295,12 @@ func DefaultConfig() *Config {
 					BaseURL:    "http://localhost:8888",
 					MaxResults: 10,
 				},
-			Perplexity: PerplexityConfig{
-				Enabled:    false,
-				APIKey:     "",
-				Model:      "sonar",
-				MaxResults: 5,
-			},
+				Perplexity: PerplexityConfig{
+					Enabled:    false,
+					APIKey:     "",
+					Model:      "sonar",
+					MaxResults: 5,
+				},
 			},
 			Cron: CronToolsConfig{
 				ExecTimeoutMinutes: 5,
@@ -330,5 +330,14 @@ func DefaultConfig() *Config {
 			Enabled:    false,
 			MonitorUSB: true,
 		},
+	}
+}
+
+// DefaultAgentSkillsConfig returns the default skills configuration.
+func DefaultAgentSkillsConfig() AgentSkillsConfig {
+	return AgentSkillsConfig{
+		Enabled:       true,
+		AutoInject:    false,
+		MaxAutoInject: 3,
 	}
 }

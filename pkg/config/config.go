@@ -70,8 +70,8 @@ type HooksConfig struct {
 }
 
 type HookMatcher struct {
-	Matcher string       `json:"matcher"`
-	Hooks   []HookEntry  `json:"hooks"`
+	Matcher string      `json:"matcher"`
+	Hooks   []HookEntry `json:"hooks"`
 }
 
 type HookEntry struct {
@@ -155,6 +155,7 @@ type AgentConfig struct {
 	Workspace         string            `json:"workspace,omitempty"`
 	Model             *AgentModelConfig `json:"model,omitempty"`
 	Skills            []string          `json:"skills,omitempty"`
+	SkillsConfig      AgentSkillsConfig `json:"skills_config,omitempty"`
 	Subagents         *SubagentsConfig  `json:"subagents,omitempty"`
 	MaxTokens         int               `json:"max_tokens,omitempty"`
 	Temperature       *float64          `json:"temperature,omitempty"`
@@ -162,6 +163,16 @@ type AgentConfig struct {
 	ThinkingBudget    int               `json:"thinking_budget,omitempty"`
 	ContextWindow     int               `json:"context_window,omitempty"`
 	MCPServers        []string          `json:"mcp_servers,omitempty"`
+}
+
+// AgentSkillsConfig holds per-agent skill trigger configuration.
+type AgentSkillsConfig struct {
+	Enabled       bool     `json:"enabled"`
+	AutoInject    bool     `json:"auto_inject"`
+	MaxAutoInject int      `json:"max_auto_inject"`
+	AllowList     []string `json:"allow_list"`
+	BlockList     []string `json:"block_list"`
+	TokenBudget   int      `json:"token_budget"`
 }
 
 type SubagentsConfig struct {
@@ -508,8 +519,8 @@ type ExecConfig struct {
 // ClaudeCodeConfig holds configuration for the Claude Code delegation tool.
 type ClaudeCodeConfig struct {
 	Enabled        bool    `json:"enabled"          env:"PICOCLAW_TOOLS_CLAUDE_CODE_ENABLED"`
-	TimeoutSeconds int     `json:"timeout_seconds"  env:"PICOCLAW_TOOLS_CLAUDE_CODE_TIMEOUT_SECONDS"` // 0 means default (600s = 10 min)
-	PermissionMode string  `json:"permission_mode"   env:"PICOCLAW_TOOLS_CLAUDE_CODE_PERMISSION_MODE"`  // "auto", "bypassPermissions", etc. Default: "auto"
+	TimeoutSeconds int     `json:"timeout_seconds"  env:"PICOCLAW_TOOLS_CLAUDE_CODE_TIMEOUT_SECONDS"`  // 0 means default (600s = 10 min)
+	PermissionMode string  `json:"permission_mode"   env:"PICOCLAW_TOOLS_CLAUDE_CODE_PERMISSION_MODE"` // "auto", "bypassPermissions", etc. Default: "auto"
 	MaxBudgetUSD   float64 `json:"max_budget_usd"   env:"PICOCLAW_TOOLS_CLAUDE_CODE_MAX_BUDGET_USD"`   // 0 means no limit
 }
 
