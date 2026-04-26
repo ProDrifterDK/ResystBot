@@ -2,6 +2,9 @@ package providers
 
 import (
 	"context"
+	"errors"
+	"io"
+	"net"
 	"regexp"
 	"strings"
 )
@@ -52,6 +55,10 @@ var (
 		substr("network is unreachable"),
 		substr("connection timed out"),
 		substr("i/o timeout"),
+		substr("dial tcp"),
+		substr("tls:"),
+		substr("x509:"),
+		substr("syscall: connection reset by peer"),
 	}
 
 	billingPatterns = []errorPattern{
@@ -138,6 +145,35 @@ func ClassifyError(err error, provider, model string) *FailoverError {
 		}
 	}
 
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return &FailoverError{
+			Reason:   FailoverNetwork,
+			Provider: provider,
+			Model:    model,
+			Wrapped:  err,
+		}
+	}
+
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return &FailoverError{
+			Reason:   FailoverNetwork,
+			Provider: provider,
+			Model:    model,
+			Wrapped:  err,
+		}
+	}
+
+	if errors.Is(err, io.EOF) {
+		return &FailoverError{
+			Reason:   FailoverNetwork,
+			Provider: provider,
+			Model:    model,
+			Wrapped:  err,
+		}
+	}
+
 	msg := strings.ToLower(err.Error())
 
 	// Image dimension/size errors: non-retriable, non-fallback.
@@ -211,7 +247,7 @@ func classifyByMessage(msg string) FailoverReason {
 		return FailoverTimeout
 	}
 	if matchesAny(msg, connectionPatterns) {
-		return FailoverTimeout
+		return FailoverNetwork
 	}
 	if matchesAny(msg, authPatterns) {
 		return FailoverAuth

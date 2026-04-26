@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"testing"
 )
 
@@ -137,6 +139,7 @@ func TestClassifyError_TimeoutPatterns(t *testing.T) {
 	patterns := []string{
 		"request timeout",
 		"connection timed out",
+		"i/o timeout",
 		"deadline exceeded",
 		"context deadline exceeded",
 	}
@@ -151,6 +154,33 @@ func TestClassifyError_TimeoutPatterns(t *testing.T) {
 		if result.Reason != FailoverTimeout {
 			t.Errorf("pattern %q: reason = %q, want timeout", msg, result.Reason)
 		}
+	}
+}
+
+func TestClassifyError_NetworkPatterns(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "io eof", err: io.EOF},
+		{name: "dial tcp", err: errors.New("dial tcp 192.168.1.1:443: connection refused")},
+		{name: "tls handshake", err: errors.New("tls: handshake failure")},
+		{name: "x509 cert", err: errors.New("x509: certificate signed by unknown authority")},
+		{name: "dns message", err: errors.New("no such host")},
+		{name: "net op error", err: &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}},
+		{name: "dns error type", err: &net.DNSError{Err: "no such host", Name: "example.invalid"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ClassifyError(tt.err, "openai", "gpt-4")
+			if result == nil {
+				t.Fatal("expected non-nil")
+			}
+			if result.Reason != FailoverNetwork {
+				t.Errorf("reason = %q, want network", result.Reason)
+			}
+		})
 	}
 }
 
@@ -263,6 +293,7 @@ func TestFailoverError_IsRetriable(t *testing.T) {
 		{FailoverRateLimit, true},
 		{FailoverBilling, true},
 		{FailoverTimeout, true},
+		{FailoverNetwork, true},
 		{FailoverOverloaded, true},
 		{FailoverFormat, false},
 		{FailoverUnknown, true},
@@ -273,6 +304,13 @@ func TestFailoverError_IsRetriable(t *testing.T) {
 		if fe.IsRetriable() != tt.retriable {
 			t.Errorf("IsRetriable(%q) = %v, want %v", tt.reason, fe.IsRetriable(), tt.retriable)
 		}
+	}
+}
+
+func TestIsRetriable_FailoverNetwork(t *testing.T) {
+	fe := &FailoverError{Reason: FailoverNetwork}
+	if !fe.IsRetriable() {
+		t.Fatal("FailoverNetwork should be retriable")
 	}
 }
 

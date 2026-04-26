@@ -43,6 +43,7 @@ const (
 	FailoverRateLimit       FailoverReason = "rate_limit"
 	FailoverBilling         FailoverReason = "billing"
 	FailoverTimeout         FailoverReason = "timeout"
+	FailoverNetwork         FailoverReason = "network"
 	FailoverFormat          FailoverReason = "format"
 	FailoverOverloaded      FailoverReason = "overloaded"
 	FailoverContextOverflow FailoverReason = "context_overflow"
