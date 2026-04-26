@@ -36,6 +36,7 @@ type AgentLoop struct {
 	cfg                    *config.Config
 	registry               *AgentRegistry
 	state                  *state.Manager
+	contextMgr             ContextManager
 	running                atomic.Bool
 	summarizing            sync.Map
 	fallback               *providers.FallbackChain
@@ -92,11 +93,13 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 		cfg:              cfg,
 		registry:         registry,
 		state:            stateManager,
+		contextMgr:       nil,
 		summarizing:      sync.Map{},
 		fallback:         fallbackChain,
 		subagentManagers: subagentManagers,
 		hookExecutor:     hookExecutor,
 	}
+	al.contextMgr = newLegacyContextManager(al)
 
 	// Initialize memory write pipeline
 	if cfg.Memory.Enabled {
@@ -126,6 +129,10 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 	}
 
 	return al
+}
+
+func (al *AgentLoop) ContextManager() ContextManager {
+	return al.contextMgr
 }
 
 // registerSharedTools registers tools that are shared across all agents (web, message, spawn).
@@ -749,15 +756,19 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, agent *AgentInstance, opt
 		AgentType:   agent.ID,
 		SessionKey:  opts.SessionKey,
 	})
-	messages := agent.ContextBuilder.BuildMessages(
-		ctx,
-		history,
-		summary,
-		userMsg,
-		nil,
-		opts.Channel,
-		opts.ChatID,
-	)
+	assembleResp, err := al.ContextManager().Assemble(withLegacyContextAgent(ctx, agent), &AssembleRequest{
+		SessionKey:  opts.SessionKey,
+		History:     history,
+		Summary:     summary,
+		UserMessage: userMsg,
+		Media:       nil,
+		Channel:     opts.Channel,
+		ChatID:      opts.ChatID,
+	})
+	if err != nil {
+		return "", err
+	}
+	messages := assembleResp.Messages
 
 	// 3. Save user message to session (original, not modified by hooks)
 	agent.Sessions.AddMessage(opts.SessionKey, "user", opts.UserMessage)
@@ -789,7 +800,14 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, agent *AgentInstance, opt
 
 	// 6b. Index conversation turn in memory system (async, non-blocking)
 	if al.memoryWriter != nil && finalContent != "" && finalContent != opts.DefaultResponse {
-		al.memoryWriter.IndexConversationTurn(opts.UserMessage, finalContent, opts.ChatID)
+		if err := al.ContextManager().Ingest(ctx, &IngestRequest{
+			SessionKey: opts.SessionKey,
+			UserMsg:    opts.UserMessage,
+			AgentReply: finalContent,
+			Source:     opts.ChatID,
+		}); err != nil {
+			logger.WarnCF("agent", "Failed to index conversation turn", map[string]any{"error": err.Error()})
+		}
 	}
 
 	// 6c. Reconsolidation check — update access counts and trigger rewrite if needed
