@@ -590,7 +590,7 @@ func (t *WebSearchTool) Execute(ctx context.Context, args map[string]any) *ToolR
 
 	return &ToolResult{
 		ForLLM:  result,
-		ForUser: "",
+		ForUser: result,
 	}
 }
 
