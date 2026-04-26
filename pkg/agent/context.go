@@ -19,6 +19,8 @@ import (
 type ContextBuilder struct {
 	workspace          string
 	skillsLoader       *skills.SkillsLoader
+	triggerEngine      *skills.TriggerEngine
+	lastTriggerContext skills.TriggerContext
 	memory             *MemoryStore
 	tools              *tools.ToolRegistry    // Direct reference to tool registry
 	retriever          memory.MemoryRetriever // nil = use fallback
@@ -61,6 +63,28 @@ func (cb *ContextBuilder) SetRetriever(r memory.MemoryRetriever) {
 // GetInjectedChunks returns the memory chunks injected in the last BuildMessages call.
 func (cb *ContextBuilder) GetInjectedChunks() []memory.MemoryChunk {
 	return cb.lastInjectedChunks
+}
+
+// GetSkillsLoader returns the skills loader for tool registration.
+func (cb *ContextBuilder) GetSkillsLoader() *skills.SkillsLoader {
+	return cb.skillsLoader
+}
+
+// SetTriggerEngine sets the trigger engine for auto-injection.
+func (cb *ContextBuilder) SetTriggerEngine(engine *skills.TriggerEngine) {
+	cb.triggerEngine = engine
+}
+
+// UpdateTriggerContext updates the context used for trigger matching.
+func (cb *ContextBuilder) UpdateTriggerContext(msg skills.TriggerContext) {
+	cb.lastTriggerContext = msg
+}
+
+// RecordToolCall records a tool call for trigger matching.
+func (cb *ContextBuilder) RecordToolCall(toolName string, sessionKey string) {
+	if cb.triggerEngine != nil {
+		cb.triggerEngine.RecordToolCall(toolName, sessionKey)
+	}
 }
 
 func (cb *ContextBuilder) getIdentity() string {
@@ -135,14 +159,23 @@ func (cb *ContextBuilder) BuildSystemPrompt() string {
 		parts = append(parts, bootstrapContent)
 	}
 
-	// Skills - show summary, AI can read full content with read_file tool
-	skillsSummary := cb.skillsLoader.BuildSkillsSummary()
-	if skillsSummary != "" {
-		parts = append(parts, fmt.Sprintf(`# Skills
+	// Skills - v2: compact index only, full body loaded on demand
+	skillsIndex := cb.skillsLoader.BuildSkillsIndex()
+	if skillsIndex != "" {
+		parts = append(parts, skillsIndex)
+	}
 
-The following skills extend your capabilities. To use a skill, read its SKILL.md file using the read_file tool.
-
-%s`, skillsSummary))
+	// Auto-injected skills (from trigger matching)
+	if cb.triggerEngine != nil {
+		autoSkills := cb.triggerEngine.MatchSkills(cb.lastTriggerContext)
+		for _, match := range autoSkills {
+			content, _ := cb.skillsLoader.LoadSkill(match.Skill.Name)
+			if content != "" {
+				parts = append(parts, fmt.Sprintf(
+					"<skill_content name=%q reason=%q>\n%s\n</skill_content>",
+					match.Skill.Name, match.Reason, content))
+			}
+		}
 	}
 
 	// Memory context — when retriever is available, auto-injection happens in BuildMessages instead

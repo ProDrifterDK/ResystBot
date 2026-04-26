@@ -198,6 +198,8 @@ func registerSharedTools(
 		)
 		agent.Tools.Register(tools.NewFindSkillsTool(registryMgr, searchCache))
 		agent.Tools.Register(tools.NewInstallSkillTool(registryMgr, agent.Workspace))
+		// Skill lazy-load tool (v2)
+		agent.Tools.Register(tools.NewSkillLoadTool(agent.ContextBuilder.GetSkillsLoader()))
 
 		// Claude Code delegation tool
 		if cfg.Tools.ClaudeCode.Enabled {
@@ -742,6 +744,11 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, agent *AgentInstance, opt
 		history = session.CompressForLLM(agent.Sessions.GetHistory(opts.SessionKey))
 		summary = agent.Sessions.GetSummary(opts.SessionKey)
 	}
+	agent.ContextBuilder.UpdateTriggerContext(skills.TriggerContext{
+		UserMessage: opts.UserMessage,
+		AgentType:   agent.ID,
+		SessionKey:  opts.SessionKey,
+	})
 	messages := agent.ContextBuilder.BuildMessages(
 		ctx,
 		history,
@@ -1171,6 +1178,7 @@ func (al *AgentLoop) runLLMIteration(
 				opts.ChatID,
 				asyncCallback,
 			)
+			agent.ContextBuilder.RecordToolCall(tc.Name, opts.SessionKey)
 
 			// Send ForUser content to user immediately if not Silent
 			if !toolResult.Silent && toolResult.ForUser != "" && opts.SendResponse {

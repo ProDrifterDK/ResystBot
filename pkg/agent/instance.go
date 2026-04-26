@@ -12,32 +12,33 @@ import (
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/routing"
 	"github.com/sipeed/picoclaw/pkg/session"
+	"github.com/sipeed/picoclaw/pkg/skills"
 	"github.com/sipeed/picoclaw/pkg/tools"
 )
 
 // AgentInstance represents a fully configured agent with its own workspace,
 // session manager, context builder, and tool registry.
 type AgentInstance struct {
-	ID              string
-	Name            string
-	Model           string
-	Fallbacks       []string
-	Workspace       string
-	MaxIterations      int
+	ID                  string
+	Name                string
+	Model               string
+	Fallbacks           []string
+	Workspace           string
+	MaxIterations       int
 	MaxToolCallsPerIter int
-	MaxTokens       int
-	Temperature     float64
-	ContextWindow   int
-	ThinkingBudget  int
-	Provider        providers.LLMProvider
-	ProvidersByName map[string]providers.LLMProvider // provider-name → provider, for fallback routing
-	Sessions        *session.SessionManager
-	ContextBuilder  *ContextBuilder
-	Tools           *tools.ToolRegistry
-	Subagents       *config.SubagentsConfig
-	SkillsFilter    []string
-	Candidates      []providers.FallbackCandidate
-	MCPManager      *mcp.Manager
+	MaxTokens           int
+	Temperature         float64
+	ContextWindow       int
+	ThinkingBudget      int
+	Provider            providers.LLMProvider
+	ProvidersByName     map[string]providers.LLMProvider // provider-name → provider, for fallback routing
+	Sessions            *session.SessionManager
+	ContextBuilder      *ContextBuilder
+	Tools               *tools.ToolRegistry
+	Subagents           *config.SubagentsConfig
+	SkillsFilter        []string
+	Candidates          []providers.FallbackCandidate
+	MCPManager          *mcp.Manager
 }
 
 // NewAgentInstance creates an agent instance from config.
@@ -90,6 +91,26 @@ func NewAgentInstance(
 
 	contextBuilder := NewContextBuilder(workspace)
 	contextBuilder.SetToolsRegistry(toolsRegistry)
+
+	// Skills v2: create trigger engine with agent's skill config
+	triggerConfig := skills.TriggerConfig{
+		Enabled:       true,
+		AutoInject:    true,
+		MaxAutoInject: 3,
+	}
+	if agentCfg != nil {
+		triggerConfig.Enabled = agentCfg.SkillsConfig.Enabled
+		triggerConfig.AutoInject = agentCfg.SkillsConfig.AutoInject
+		triggerConfig.MaxAutoInject = agentCfg.SkillsConfig.MaxAutoInject
+		triggerConfig.AllowList = agentCfg.SkillsConfig.AllowList
+		triggerConfig.BlockList = agentCfg.SkillsConfig.BlockList
+		triggerConfig.TokenBudget = agentCfg.SkillsConfig.TokenBudget
+	}
+	if triggerConfig.MaxAutoInject == 0 {
+		triggerConfig.MaxAutoInject = 3
+	}
+	triggerEngine := skills.NewTriggerEngine(contextBuilder.GetSkillsLoader(), triggerConfig)
+	contextBuilder.SetTriggerEngine(triggerEngine)
 
 	agentID := routing.DefaultAgentID
 	agentName := ""
