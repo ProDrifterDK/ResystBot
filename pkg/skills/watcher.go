@@ -178,7 +178,8 @@ func (sw *SkillWatcher) addWatch(dir string) error {
 	}
 
 	for _, entry := range entries {
-		if !entry.IsDir() {
+		// Follow symlinks: entry.IsDir() returns false for symlinks
+		if fi, err := os.Stat(filepath.Join(dir, entry.Name())); err != nil || !fi.IsDir() {
 			continue
 		}
 		skillDir := filepath.Join(dir, entry.Name())

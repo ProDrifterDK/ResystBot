@@ -125,7 +125,8 @@ func (sl *SkillsLoader) ListSkills() []SkillInfo {
 			return
 		}
 		for _, d := range dirs {
-			if !d.IsDir() {
+			// Follow symlinks: d.IsDir() returns false for symlinks
+			if fi, err := os.Stat(filepath.Join(dir, d.Name())); err != nil || !fi.IsDir() {
 				continue
 			}
 			skillFile := filepath.Join(dir, d.Name(), "SKILL.md")
