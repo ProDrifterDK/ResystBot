@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	sdnotify "github.com/okzk/sdnotify"
 	"github.com/sipeed/picoclaw/pkg/agent"
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/channels"
@@ -23,8 +24,8 @@ import (
 	"github.com/sipeed/picoclaw/pkg/heartbeat"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/providers"
+	"github.com/sipeed/picoclaw/pkg/skills"
 	"github.com/sipeed/picoclaw/pkg/state"
-	sdnotify "github.com/okzk/sdnotify"
 	"github.com/sipeed/picoclaw/pkg/tools"
 	"github.com/sipeed/picoclaw/pkg/transport"
 	"github.com/sipeed/picoclaw/pkg/voice"
@@ -77,6 +78,33 @@ func gatewayCmd() {
 			"skills_total":     skillsInfo["total"],
 			"skills_available": skillsInfo["available"],
 		})
+
+	var skillWatcher *skills.SkillWatcher
+	homeDir, homeErr := os.UserHomeDir()
+	if homeErr != nil {
+		logger.WarnCF("skills", "Failed to resolve home directory", map[string]any{"error": homeErr.Error()})
+	} else if wd, wdErr := os.Getwd(); wdErr != nil {
+		logger.WarnCF("skills", "Failed to resolve working directory", map[string]any{"error": wdErr.Error()})
+	} else {
+		watcherLoader := skills.NewSkillsLoader(
+			cfg.WorkspacePath(),
+			filepath.Join(homeDir, ".picoclaw", "skills"),
+			filepath.Join(wd, "skills"),
+		)
+
+		skillWatcher, err = skills.NewSkillWatcher(watcherLoader, func(skillName, event string) {
+			logger.InfoCF("skills", "Skill changed",
+				map[string]any{"skill": skillName, "event": event})
+		})
+		if err != nil {
+			logger.WarnCF("skills", "Failed to create skill watcher", map[string]any{"error": err.Error()})
+		} else if err := skillWatcher.Start(); err != nil {
+			logger.WarnCF("skills", "Failed to start skill watcher", map[string]any{"error": err.Error()})
+			skillWatcher = nil
+		} else {
+			fmt.Println("✓ Skill watcher started")
+		}
+	}
 
 	// Setup cron tool and service
 	execTimeout := time.Duration(cfg.Tools.Cron.ExecTimeoutMinutes) * time.Minute
@@ -233,6 +261,9 @@ func gatewayCmd() {
 	deviceService.Stop()
 	heartbeatService.Stop()
 	cronService.Stop()
+	if skillWatcher != nil {
+		skillWatcher.Stop()
+	}
 	agentLoop.Stop()
 	channelManager.StopAll(ctx)
 	fmt.Println("✓ Gateway stopped")
