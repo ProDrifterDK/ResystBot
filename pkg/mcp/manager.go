@@ -2,7 +2,9 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -16,18 +18,22 @@ import (
 )
 
 type ServerConnection struct {
-	Name      string
-	Client    *mcpclient.Client
-	Tools     []mcpgo.Tool
-	Config    config.MCPServerConfig
-	mu        sync.RWMutex
-	connected bool
-	lastError error
+	Name             string
+	Client           *mcpclient.Client
+	Tools            []mcpgo.Tool
+	Config           config.MCPServerConfig
+	mu               sync.RWMutex
+	reconnectMu      sync.Mutex
+	connected        bool
+	lastError        error
+	reconnectVersion uint64
+	callTool         func(context.Context, mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error)
 }
 
 type Manager struct {
 	connections map[string]*ServerConnection
 	mu          sync.RWMutex
+	connectFn   func(context.Context, string, config.MCPServerConfig) (*ServerConnection, error)
 }
 
 func NewManager(ctx context.Context, mcpCfg config.MCPConfig) (*Manager, error) {
@@ -55,7 +61,7 @@ func NewManager(ctx context.Context, mcpCfg config.MCPConfig) (*Manager, error) 
 			continue
 		}
 
-		conn, err := m.connectServer(ctx, name, cfg)
+		conn, err := m.connect(ctx, name, cfg)
 		if err != nil {
 			logger.WarnCF("mcp", "Failed to connect to MCP server", map[string]any{
 				"server": name,
@@ -157,8 +163,16 @@ func (m *Manager) connectServer(ctx context.Context, name string, cfg config.MCP
 		Client:    c,
 		Tools:     tools,
 		Config:    cfg,
+		callTool:  c.CallTool,
 		connected: true,
 	}, nil
+}
+
+func (m *Manager) connect(ctx context.Context, name string, cfg config.MCPServerConfig) (*ServerConnection, error) {
+	if m.connectFn != nil {
+		return m.connectFn(ctx, name, cfg)
+	}
+	return m.connectServer(ctx, name, cfg)
 }
 
 func initializeClient(ctx context.Context, c *mcpclient.Client) (*mcpgo.InitializeResult, error) {
@@ -242,11 +256,29 @@ func (m *Manager) CallTool(ctx context.Context, serverName, toolName string, arg
 		return nil, fmt.Errorf("MCP server %q is not connected", serverName)
 	}
 
+	reconnectVersion := conn.currentReconnectVersion()
+	callTool := conn.callToolFunc()
 	req := mcpgo.CallToolRequest{}
 	req.Params.Name = toolName
-	req.Params.Arguments = args
+	req.Params.Arguments = cloneStringAnyMap(args)
 
-	return conn.Client.CallTool(ctx, req)
+	result, err := callTool(ctx, req)
+	if err == nil || !isSessionLostError(err) {
+		if err != nil && isConnectionError(err) {
+			conn.mu.Lock()
+			conn.connected = false
+			conn.lastError = err
+			conn.mu.Unlock()
+		}
+		return result, err
+	}
+
+	if reconnectErr := m.reconnectConnection(ctx, serverName, conn, reconnectVersion); reconnectErr != nil {
+		return nil, reconnectErr
+	}
+
+	req.Params.Arguments = cloneStringAnyMap(args)
+	return conn.callToolFunc()(ctx, req)
 }
 
 func (m *Manager) Reconnect(ctx context.Context, serverName string) error {
@@ -256,6 +288,27 @@ func (m *Manager) Reconnect(ctx context.Context, serverName string) error {
 
 	if !ok {
 		return fmt.Errorf("unknown MCP server: %s", serverName)
+	}
+
+	conn.mu.RLock()
+	healthy := conn.connected && conn.lastError == nil
+	conn.mu.RUnlock()
+	if healthy {
+		return nil
+	}
+
+	return m.reconnectConnection(ctx, serverName, conn, conn.currentReconnectVersion())
+}
+
+func (m *Manager) reconnectConnection(ctx context.Context, serverName string, conn *ServerConnection, reconnectVersion uint64) error {
+	conn.reconnectMu.Lock()
+	defer conn.reconnectMu.Unlock()
+
+	conn.mu.RLock()
+	alreadyReconnected := conn.reconnectVersion != reconnectVersion
+	conn.mu.RUnlock()
+	if alreadyReconnected {
+		return nil
 	}
 
 	conn.mu.Lock()
@@ -287,7 +340,7 @@ func (m *Manager) Reconnect(ctx context.Context, serverName string) error {
 			"attempt": i + 1,
 		})
 
-		newConn, err := m.connectServer(ctx, serverName, conn.Config)
+		newConn, err := m.connect(ctx, serverName, conn.Config)
 		if err != nil {
 			lastErr = err
 			logger.WarnCF("mcp", "Reconnect attempt failed", map[string]any{
@@ -300,8 +353,10 @@ func (m *Manager) Reconnect(ctx context.Context, serverName string) error {
 
 		conn.Client = newConn.Client
 		conn.Tools = newConn.Tools
+		conn.callTool = newConn.callTool
 		conn.connected = true
 		conn.lastError = nil
+		conn.reconnectVersion++
 		logger.InfoCF("mcp", "Successfully reconnected MCP server", map[string]any{
 			"server": serverName,
 		})
@@ -310,6 +365,113 @@ func (m *Manager) Reconnect(ctx context.Context, serverName string) error {
 
 	conn.lastError = lastErr
 	return fmt.Errorf("reconnection failed after %d attempts: %w", maxRetries, lastErr)
+}
+
+func (c *ServerConnection) currentClient() *mcpclient.Client {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.Client
+}
+
+func (c *ServerConnection) currentReconnectVersion() uint64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.reconnectVersion
+}
+
+func (c *ServerConnection) callToolFunc() func(context.Context, mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.callTool != nil {
+		return c.callTool
+	}
+	return c.Client.CallTool
+}
+
+func isSessionLostError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, mcptransport.ErrSessionTerminated) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "session")
+}
+
+func cloneStringAnyMap(m map[string]any) map[string]any {
+	if len(m) == 0 {
+		return map[string]any{}
+	}
+
+	clone := make(map[string]any, len(m))
+	for k, v := range m {
+		clone[k] = cloneAnyValue(v)
+	}
+	return clone
+}
+
+func cloneAnyValue(v any) any {
+	if v == nil {
+		return nil
+	}
+	return cloneReflectValue(reflect.ValueOf(v)).Interface()
+}
+
+func cloneReflectValue(v reflect.Value) reflect.Value {
+	if !v.IsValid() {
+		return v
+	}
+
+	switch v.Kind() {
+	case reflect.Interface:
+		if v.IsNil() {
+			return reflect.Zero(v.Type())
+		}
+		cloned := cloneReflectValue(v.Elem())
+		return cloned.Convert(v.Elem().Type())
+	case reflect.Pointer:
+		if v.IsNil() {
+			return reflect.Zero(v.Type())
+		}
+		clone := reflect.New(v.Elem().Type())
+		clone.Elem().Set(cloneReflectValue(v.Elem()))
+		return clone
+	case reflect.Map:
+		if v.IsNil() {
+			return reflect.MakeMap(v.Type())
+		}
+		clone := reflect.MakeMapWithSize(v.Type(), v.Len())
+		iter := v.MapRange()
+		for iter.Next() {
+			clone.SetMapIndex(iter.Key(), cloneReflectValue(iter.Value()))
+		}
+		return clone
+	case reflect.Slice:
+		if v.IsNil() {
+			return reflect.MakeSlice(v.Type(), 0, 0)
+		}
+		clone := reflect.MakeSlice(v.Type(), v.Len(), v.Len())
+		for i := 0; i < v.Len(); i++ {
+			clone.Index(i).Set(cloneReflectValue(v.Index(i)))
+		}
+		return clone
+	case reflect.Array:
+		clone := reflect.New(v.Type()).Elem()
+		for i := 0; i < v.Len(); i++ {
+			clone.Index(i).Set(cloneReflectValue(v.Index(i)))
+		}
+		return clone
+	case reflect.Struct:
+		clone := reflect.New(v.Type()).Elem()
+		for i := 0; i < v.NumField(); i++ {
+			if clone.Field(i).CanSet() {
+				clone.Field(i).Set(cloneReflectValue(v.Field(i)))
+			}
+		}
+		return clone
+	default:
+		return v
+	}
 }
 
 func (m *Manager) Shutdown(ctx context.Context) error {
