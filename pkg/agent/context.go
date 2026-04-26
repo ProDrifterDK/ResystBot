@@ -148,6 +148,22 @@ func (cb *ContextBuilder) buildToolsSection() string {
 }
 
 func (cb *ContextBuilder) BuildSystemPrompt() string {
+	registry := newPromptRegistry()
+	registry.register(&identityContributor{builder: cb})
+	registry.register(&bootstrapContributor{builder: cb})
+	registry.register(&skillsIndexContributor{builder: cb})
+	registry.register(&autoSkillsContributor{builder: cb})
+	registry.register(&memoryFallbackContributor{builder: cb})
+
+	parts, err := registry.collect(context.Background())
+	if err != nil {
+		return cb.buildSystemPromptLegacy()
+	}
+
+	return renderPromptParts(parts, "\n\n---\n\n")
+}
+
+func (cb *ContextBuilder) buildSystemPromptLegacy() string {
 	parts := []string{}
 
 	// Core identity section
