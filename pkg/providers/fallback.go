@@ -12,12 +12,24 @@ import (
 // FallbackChain orchestrates model fallback across multiple candidates.
 type FallbackChain struct {
 	cooldown *CooldownTracker
+	rl       *RateLimiterRegistry
 }
 
 // FallbackCandidate represents one model/provider to try.
 type FallbackCandidate struct {
-	Provider string
-	Model    string
+	Provider    string
+	Model       string
+	RPM         int    // requests per minute; 0 means unrestricted
+	IdentityKey string // optional stable config identity for cooldown/rate limiting
+}
+
+// StableKey returns the candidate's config-level identity when available,
+// otherwise falls back to the runtime provider/model key.
+func (c FallbackCandidate) StableKey() string {
+	if key := strings.TrimSpace(c.IdentityKey); key != "" {
+		return key
+	}
+	return ModelKey(c.Provider, c.Model)
 }
 
 // FallbackResult contains the successful response and metadata about all attempts.
@@ -35,12 +47,16 @@ type FallbackAttempt struct {
 	Error    error
 	Reason   FailoverReason
 	Duration time.Duration
-	Skipped  bool // true if skipped due to cooldown
+	Skipped  bool // true if skipped due to cooldown or local rate limiting
 }
 
 // NewFallbackChain creates a new fallback chain with the given cooldown tracker.
-func NewFallbackChain(cooldown *CooldownTracker) *FallbackChain {
-	return &FallbackChain{cooldown: cooldown}
+func NewFallbackChain(cooldown *CooldownTracker, rl ...*RateLimiterRegistry) *FallbackChain {
+	var registry *RateLimiterRegistry
+	if len(rl) > 0 {
+		registry = rl[0]
+	}
+	return &FallbackChain{cooldown: cooldown, rl: registry}
 }
 
 // ResolveCandidates parses model config into a deduplicated candidate list.
@@ -123,6 +139,33 @@ func (fc *FallbackChain) Execute(
 				),
 			})
 			continue
+		}
+
+		// Enforce per-candidate rate limit before calling the provider.
+		if fc.rl != nil {
+			rateLimitKey := candidate.StableKey()
+			if !fc.rl.TryAcquire(rateLimitKey) {
+				if i < len(candidates)-1 {
+					result.Attempts = append(result.Attempts, FallbackAttempt{
+						Provider: candidate.Provider,
+						Model:    candidate.Model,
+						Skipped:  true,
+						Reason:   FailoverRateLimit,
+						Error:    fmt.Errorf("%s waiting for local rate limit token", rateLimitKey),
+					})
+					continue
+				}
+				if waitErr := fc.rl.Wait(ctx, rateLimitKey); waitErr != nil {
+					result.Attempts = append(result.Attempts, FallbackAttempt{
+						Provider: candidate.Provider,
+						Model:    candidate.Model,
+						Skipped:  true,
+						Reason:   FailoverRateLimit,
+						Error:    waitErr,
+					})
+					return nil, waitErr
+				}
+			}
 		}
 
 		// Execute the run function.
@@ -348,7 +391,6 @@ func (fc *FallbackChain) ExecuteWithValidator(
 }
 
 // ExecuteImage runs the fallback chain for image/vision requests.
-// Simpler than Execute: no cooldown checks (image endpoints have different rate limits).
 // Image dimension/size errors abort immediately (non-retriable).
 func (fc *FallbackChain) ExecuteImage(
 	ctx context.Context,
@@ -366,6 +408,33 @@ func (fc *FallbackChain) ExecuteImage(
 	for i, candidate := range candidates {
 		if ctx.Err() == context.Canceled {
 			return nil, context.Canceled
+		}
+
+		// Enforce per-candidate rate limit before calling the provider.
+		if fc.rl != nil {
+			imageKey := candidate.StableKey()
+			if !fc.rl.TryAcquire(imageKey) {
+				if i < len(candidates)-1 {
+					result.Attempts = append(result.Attempts, FallbackAttempt{
+						Provider: candidate.Provider,
+						Model:    candidate.Model,
+						Skipped:  true,
+						Reason:   FailoverRateLimit,
+						Error:    fmt.Errorf("%s waiting for local rate limit token", imageKey),
+					})
+					continue
+				}
+				if waitErr := fc.rl.Wait(ctx, imageKey); waitErr != nil {
+					result.Attempts = append(result.Attempts, FallbackAttempt{
+						Provider: candidate.Provider,
+						Model:    candidate.Model,
+						Skipped:  true,
+						Reason:   FailoverRateLimit,
+						Error:    waitErr,
+					})
+					return nil, waitErr
+				}
+			}
 		}
 
 		start := time.Now()

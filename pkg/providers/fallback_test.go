@@ -67,6 +67,39 @@ func TestFallback_SecondCandidateSuccess(t *testing.T) {
 	}
 }
 
+func TestFallback_RetryOnNetworkError(t *testing.T) {
+	ct := NewCooldownTracker()
+	fc := NewFallbackChain(ct)
+
+	candidates := []FallbackCandidate{
+		makeCandidate("openai", "gpt-4"),
+		makeCandidate("anthropic", "claude-opus"),
+	}
+
+	attempt := 0
+	run := func(ctx context.Context, provider, model string) (*LLMResponse, error) {
+		attempt++
+		if attempt == 1 {
+			return nil, errors.New("dial tcp 192.168.1.1:443: connection refused")
+		}
+		return &LLMResponse{Content: "from claude", FinishReason: "stop"}, nil
+	}
+
+	result, err := fc.Execute(context.Background(), candidates, run)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Provider != "anthropic" {
+		t.Errorf("provider = %q, want anthropic", result.Provider)
+	}
+	if len(result.Attempts) != 1 {
+		t.Fatalf("attempts = %d, want 1", len(result.Attempts))
+	}
+	if result.Attempts[0].Reason != FailoverNetwork {
+		t.Errorf("reason = %q, want network", result.Attempts[0].Reason)
+	}
+}
+
 func TestFallback_AllFail(t *testing.T) {
 	ct := NewCooldownTracker()
 	fc := NewFallbackChain(ct)
@@ -557,5 +590,99 @@ func TestFallback_SharedProviderCooldownDoesNotCrossModels(t *testing.T) {
 	}
 	if skipped != 1 {
 		t.Errorf("skipped = %d, want 1 (only glm-5.1)", skipped)
+	}
+}
+
+func TestFallback_RateLimited_SkipsCandidate(t *testing.T) {
+	ct := NewCooldownTracker()
+	rl := NewRateLimiterRegistry()
+	fc := NewFallbackChain(ct, rl)
+
+	candidates := []FallbackCandidate{
+		{Provider: "openai", Model: "gpt-4", RPM: 1},
+		{Provider: "anthropic", Model: "claude"},
+	}
+	rl.RegisterCandidates(candidates)
+
+	firstResult, err := fc.Execute(context.Background(), candidates, func(ctx context.Context, provider, model string) (*LLMResponse, error) {
+		if provider != "openai" {
+			t.Fatalf("first provider = %s, want openai", provider)
+		}
+		return &LLMResponse{Content: "first", FinishReason: "stop"}, nil
+	})
+	if err != nil {
+		t.Fatalf("first Execute error = %v", err)
+	}
+	if firstResult.Provider != "openai" {
+		t.Fatalf("first result provider = %s, want openai", firstResult.Provider)
+	}
+
+	var called []string
+	secondResult, err := fc.Execute(context.Background(), candidates, func(ctx context.Context, provider, model string) (*LLMResponse, error) {
+		called = append(called, provider+"/"+model)
+		return &LLMResponse{Content: provider, FinishReason: "stop"}, nil
+	})
+	if err != nil {
+		t.Fatalf("second Execute error = %v", err)
+	}
+	if len(called) != 1 || called[0] != "anthropic/claude" {
+		t.Fatalf("called providers = %v, want [anthropic/claude]", called)
+	}
+	if secondResult.Provider != "anthropic" {
+		t.Fatalf("second result provider = %s, want anthropic", secondResult.Provider)
+	}
+	if len(secondResult.Attempts) != 1 || !secondResult.Attempts[0].Skipped {
+		t.Fatalf("expected one skipped attempt before fallback, got %+v", secondResult.Attempts)
+	}
+	if secondResult.Attempts[0].Reason != FailoverRateLimit {
+		t.Fatalf("skip reason = %s, want %s", secondResult.Attempts[0].Reason, FailoverRateLimit)
+	}
+}
+
+func TestFallback_RateLimited_WaitsOnLastCandidate(t *testing.T) {
+	ct := NewCooldownTracker()
+	rl := NewRateLimiterRegistry()
+	fc := NewFallbackChain(ct, rl)
+
+	candidates := []FallbackCandidate{{Provider: "openai", Model: "gpt-4", RPM: 1}}
+	rl.RegisterCandidates(candidates)
+
+	limiter := rl.limiters[candidates[0].StableKey()]
+	limiter.rpm = 1500
+	limiter.tokens = 1
+	limiter.maxBurst = 1
+	limiter.lastTick = time.Now()
+	limiter.nowFunc = time.Now
+
+	if _, err := fc.Execute(context.Background(), candidates, successRun("first")); err != nil {
+		t.Fatalf("first Execute error = %v", err)
+	}
+
+	start := time.Now()
+	result, err := fc.Execute(context.Background(), candidates, successRun("second"))
+	if err != nil {
+		t.Fatalf("second Execute error = %v", err)
+	}
+	if result.Provider != "openai" {
+		t.Fatalf("provider = %s, want openai", result.Provider)
+	}
+	if elapsed := time.Since(start); elapsed < 30*time.Millisecond {
+		t.Fatalf("second Execute waited %s, want at least 30ms", elapsed)
+	}
+}
+
+func TestFallback_RateLimiterRegistry_NilBackwardCompat(t *testing.T) {
+	ct := NewCooldownTracker()
+	fc := NewFallbackChain(ct)
+	if fc.rl != nil {
+		t.Fatal("expected nil rate limiter registry for backward-compatible constructor")
+	}
+
+	result, err := fc.Execute(context.Background(), []FallbackCandidate{makeCandidate("openai", "gpt-4")}, successRun("ok"))
+	if err != nil {
+		t.Fatalf("Execute error = %v", err)
+	}
+	if result.Provider != "openai" || result.Model != "gpt-4" {
+		t.Fatalf("provider/model = %s/%s, want openai/gpt-4", result.Provider, result.Model)
 	}
 }
