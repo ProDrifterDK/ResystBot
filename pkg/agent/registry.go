@@ -1,10 +1,12 @@
 package agent
 
 import (
+	"context"
 	"sync"
 
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/mcp"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/routing"
 )
@@ -41,6 +43,7 @@ func NewAgentRegistry(
 	cfg *config.Config,
 	provider providers.LLMProvider,
 ) *AgentRegistry {
+	sharedMCPManager := newSharedMCPManager(cfg)
 	registry := &AgentRegistry{
 		agents:   make(map[string]*AgentInstance),
 		resolver: routing.NewRouteResolver(cfg),
@@ -52,7 +55,7 @@ func NewAgentRegistry(
 			ID:      "main",
 			Default: true,
 		}
-		instance := NewAgentInstance(implicitAgent, &cfg.Agents.Defaults, cfg, provider)
+		instance := newAgentInstanceWithMCPManager(implicitAgent, &cfg.Agents.Defaults, cfg, provider, sharedMCPManager)
 		registry.agents["main"] = instance
 		logger.InfoCF("agent", "Created implicit main agent (no agents.list configured)", nil)
 	} else {
@@ -61,7 +64,7 @@ func NewAgentRegistry(
 			id := routing.NormalizeAgentID(ac.ID)
 			agentModel := resolveAgentModel(ac, &cfg.Agents.Defaults)
 			agentProvider := resolveAgentProvider(cfg, agentModel, provider)
-			instance := NewAgentInstance(ac, &cfg.Agents.Defaults, cfg, agentProvider)
+			instance := newAgentInstanceWithMCPManager(ac, &cfg.Agents.Defaults, cfg, agentProvider, sharedMCPManager)
 			registry.agents[id] = instance
 			logger.InfoCF("agent", "Registered agent",
 				map[string]any{
@@ -74,6 +77,20 @@ func NewAgentRegistry(
 	}
 
 	return registry
+}
+
+func newSharedMCPManager(cfg *config.Config) *mcp.Manager {
+	if cfg == nil || len(cfg.Tools.MCP.Servers) == 0 {
+		return nil
+	}
+
+	mgr, err := mcp.NewManager(context.Background(), cfg.Tools.MCP)
+	if err != nil {
+		logger.WarnCF("agent", "Shared MCP manager initialization failed", map[string]any{
+			"error": err.Error(),
+		})
+	}
+	return mgr
 }
 
 // GetAgent returns the agent instance for a given ID.

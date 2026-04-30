@@ -16,6 +16,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/constants"
 	"github.com/sipeed/picoclaw/pkg/hooks"
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/mcp"
 	"github.com/sipeed/picoclaw/pkg/memory"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/routing"
@@ -449,12 +450,21 @@ func (al *AgentLoop) Stop() {
 
 // Shutdown gracefully shuts down the agent loop, closing all MCP server connections.
 func (al *AgentLoop) Shutdown(ctx context.Context) {
+	al.shutdownMCPManagers(ctx)
+}
+
+func (al *AgentLoop) shutdownMCPManagers(ctx context.Context) int {
+	closedManagers := make(map[*mcp.Manager]struct{})
 	for _, agentID := range al.registry.ListAgentIDs() {
 		agent, ok := al.registry.GetAgent(agentID)
 		if !ok {
 			continue
 		}
 		if agent.MCPManager != nil {
+			if _, closed := closedManagers[agent.MCPManager]; closed {
+				continue
+			}
+			closedManagers[agent.MCPManager] = struct{}{}
 			if err := agent.MCPManager.Shutdown(ctx); err != nil {
 				logger.WarnCF("agent", "Error shutting down MCP manager", map[string]any{
 					"agent_id": agentID,
@@ -463,6 +473,7 @@ func (al *AgentLoop) Shutdown(ctx context.Context) {
 			}
 		}
 	}
+	return len(closedManagers)
 }
 
 func (al *AgentLoop) RegisterTool(tool tools.Tool) {

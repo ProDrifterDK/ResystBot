@@ -265,6 +265,9 @@ func gatewayCmd() {
 		skillWatcher.Stop()
 	}
 	agentLoop.Stop()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+	agentLoop.Shutdown(shutdownCtx)
 	channelManager.StopAll(ctx)
 	fmt.Println("✓ Gateway stopped")
 }

@@ -82,6 +82,86 @@ func TestNewAgentRegistry_ExplicitAgents(t *testing.T) {
 	}
 }
 
+func TestNewAgentRegistry_SharesMCPManagerAcrossAgents(t *testing.T) {
+	disabled := false
+	tmpDir := t.TempDir()
+	cfg := testCfg([]config.AgentConfig{
+		{ID: "main", Default: true, Name: "Main Bot", Workspace: tmpDir + "/main"},
+		{ID: "researcher", Name: "Researcher Bot", Workspace: tmpDir + "/researcher"},
+	})
+	cfg.Tools.MCP.Servers = map[string]config.MCPServerConfig{
+		"disabled-test-server": {
+			Command: "unused",
+			Enabled: &disabled,
+		},
+	}
+
+	registry := NewAgentRegistry(cfg, &mockRegistryProvider{})
+	mainAgent, ok := registry.GetAgent("main")
+	if !ok {
+		t.Fatal("expected main agent")
+	}
+	researcherAgent, ok := registry.GetAgent("researcher")
+	if !ok {
+		t.Fatal("expected researcher agent")
+	}
+	if mainAgent.MCPManager == nil {
+		t.Fatal("expected main agent to receive shared MCP manager")
+	}
+	if researcherAgent.MCPManager == nil {
+		t.Fatal("expected researcher agent to receive shared MCP manager")
+	}
+	if mainAgent.MCPManager != researcherAgent.MCPManager {
+		t.Fatal("expected agents to share one MCP manager")
+	}
+}
+
+func TestNewAgentRegistry_FallbackProvidersUseModelConfigIdentity(t *testing.T) {
+	cfg := testCfg([]config.AgentConfig{
+		{
+			ID:      "main",
+			Default: true,
+			Model: &config.AgentModelConfig{
+				Primary:   "zai/glm-5.1",
+				Fallbacks: []string{"ollama-cloud/deepseek-v4-flash"},
+			},
+		},
+	})
+	cfg.ModelList = []config.ModelConfig{
+		{
+			ModelName: "zai/glm-5.1",
+			Model:     "openai/glm-5.1",
+			APIBase:   "https://api.z.ai/api/coding/paas/v4",
+			APIKey:    "zai-key",
+		},
+		{
+			ModelName: "ollama-cloud/deepseek-v4-flash",
+			Model:     "openai/deepseek-v4-flash",
+			APIBase:   "https://ollama.com/v1",
+			APIKey:    "ollama-key",
+		},
+	}
+
+	registry := NewAgentRegistry(cfg, &mockRegistryProvider{})
+	agent, ok := registry.GetAgent("main")
+	if !ok {
+		t.Fatal("expected main agent")
+	}
+
+	if len(agent.Candidates) != 2 {
+		t.Fatalf("candidate count = %d, want 2", len(agent.Candidates))
+	}
+	if agent.Candidates[0].Provider == agent.Candidates[1].Provider {
+		t.Fatalf("expected distinct provider routing keys for same protocol candidates, got %q", agent.Candidates[0].Provider)
+	}
+
+	for _, candidate := range agent.Candidates {
+		if _, ok := agent.ProvidersByName[candidate.Provider]; !ok {
+			t.Fatalf("missing provider for candidate key %q", candidate.Provider)
+		}
+	}
+}
+
 func TestAgentRegistry_GetAgent_Normalize(t *testing.T) {
 	cfg := testCfg([]config.AgentConfig{
 		{ID: "my-agent", Default: true},

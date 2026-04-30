@@ -48,6 +48,16 @@ func NewAgentInstance(
 	cfg *config.Config,
 	provider providers.LLMProvider,
 ) *AgentInstance {
+	return newAgentInstanceWithMCPManager(agentCfg, defaults, cfg, provider, nil)
+}
+
+func newAgentInstanceWithMCPManager(
+	agentCfg *config.AgentConfig,
+	defaults *config.AgentDefaults,
+	cfg *config.Config,
+	provider providers.LLMProvider,
+	sharedMCPManager *mcp.Manager,
+) *AgentInstance {
 	workspace := resolveAgentWorkspace(agentCfg, defaults)
 	os.MkdirAll(workspace, 0o755)
 
@@ -69,19 +79,25 @@ func NewAgentInstance(
 	// MCP tool initialization — skipped silently if no servers are configured
 	var mcpManager *mcp.Manager
 	if len(cfg.Tools.MCP.Servers) > 0 {
-		mcpCtx := context.Background()
-		mcpMgr, err := mcp.NewManager(mcpCtx, cfg.Tools.MCP)
-		if err != nil {
-			logger.WarnCF("agent", "MCP manager initialization failed", map[string]any{
-				"error": err.Error(),
-			})
+		if sharedMCPManager != nil {
+			mcpManager = sharedMCPManager
 		} else {
+			mcpCtx := context.Background()
+			mcpMgr, err := mcp.NewManager(mcpCtx, cfg.Tools.MCP)
+			if err != nil {
+				logger.WarnCF("agent", "MCP manager initialization failed", map[string]any{
+					"error": err.Error(),
+				})
+			}
 			mcpManager = mcpMgr
+		}
+
+		if mcpManager != nil {
 			var agentMCPServers []string
 			if agentCfg != nil {
 				agentMCPServers = agentCfg.MCPServers
 			}
-			count := mcp.RegisterMCPTools(mcpMgr, toolsRegistry, agentMCPServers)
+			count := mcp.RegisterMCPTools(mcpManager, toolsRegistry, agentMCPServers)
 			logger.InfoCF("agent", "Registered MCP tools", map[string]any{
 				"count": count,
 			})
@@ -162,6 +178,8 @@ func NewAgentInstance(
 
 	// Build candidates using the actual API model strings from model_list, not the model_name shorthands.
 	// This ensures OpenRouter gets "google/gemini-3.1-pro-preview" not just "gemini-3.1-pro-preview".
+	// Provider routing is keyed by model config identity, not just protocol, because multiple
+	// OpenAI-compatible providers can share the "openai" prefix while using different API bases.
 	providersByName := make(map[string]providers.LLMProvider)
 	var candidates []providers.FallbackCandidate
 
@@ -169,16 +187,18 @@ func NewAgentInstance(
 	if mc, err := cfg.GetModelConfig(model); err == nil && mc != nil {
 		ref := providers.ParseModelRef(mc.Model, defaults.Provider)
 		if ref != nil {
-			candidates = append(candidates, providers.FallbackCandidate{Provider: ref.Provider, Model: ref.Model})
-			providersByName[ref.Provider] = provider
+			providerKey := fallbackProviderKey(ref, mc.ModelName)
+			candidates = append(candidates, providers.FallbackCandidate{Provider: providerKey, Model: ref.Model, IdentityKey: providerKey})
+			providersByName[providerKey] = provider
 		}
 	}
 	if len(candidates) == 0 {
 		// Fallback: parse model_name directly
 		ref := providers.ParseModelRef(model, defaults.Provider)
 		if ref != nil {
-			candidates = append(candidates, providers.FallbackCandidate{Provider: ref.Provider, Model: ref.Model})
-			providersByName[ref.Provider] = provider
+			providerKey := fallbackProviderKey(ref, "")
+			candidates = append(candidates, providers.FallbackCandidate{Provider: providerKey, Model: ref.Model, IdentityKey: providerKey})
+			providersByName[providerKey] = provider
 		} else {
 			providersByName[defaults.Provider] = provider
 		}
@@ -193,32 +213,34 @@ func NewAgentInstance(
 			if ref == nil {
 				continue
 			}
-			if _, exists := providersByName[ref.Provider]; !exists {
-				providersByName[ref.Provider] = provider
+			providerKey := fallbackProviderKey(ref, "")
+			if _, exists := providersByName[providerKey]; !exists {
+				providersByName[providerKey] = provider
 			}
-			candidates = append(candidates, providers.FallbackCandidate{Provider: ref.Provider, Model: ref.Model})
+			candidates = append(candidates, providers.FallbackCandidate{Provider: providerKey, Model: ref.Model, IdentityKey: providerKey})
 			continue
 		}
 		ref := providers.ParseModelRef(mc.Model, defaults.Provider)
 		if ref == nil {
 			continue
 		}
-		if _, exists := providersByName[ref.Provider]; !exists {
+		providerKey := fallbackProviderKey(ref, mc.ModelName)
+		if _, exists := providersByName[providerKey]; !exists {
 			fbProvider, _, fbErr := providers.CreateProviderFromConfig(mc)
 			if fbErr == nil {
-				providersByName[ref.Provider] = fbProvider
+				providersByName[providerKey] = fbProvider
 			}
 		}
 		// Only add if not already in candidates
 		alreadyAdded := false
 		for _, c := range candidates {
-			if c.Provider == ref.Provider && c.Model == ref.Model {
+			if c.Provider == providerKey && c.Model == ref.Model {
 				alreadyAdded = true
 				break
 			}
 		}
 		if !alreadyAdded {
-			candidates = append(candidates, providers.FallbackCandidate{Provider: ref.Provider, Model: ref.Model})
+			candidates = append(candidates, providers.FallbackCandidate{Provider: providerKey, Model: ref.Model, IdentityKey: providerKey})
 		}
 	}
 
@@ -243,6 +265,16 @@ func NewAgentInstance(
 		Candidates:      candidates,
 		MCPManager:      mcpManager,
 	}
+}
+
+func fallbackProviderKey(ref *providers.ModelRef, modelName string) string {
+	if ref == nil {
+		return ""
+	}
+	if modelName != "" {
+		return providers.ModelKey(ref.Provider, modelName)
+	}
+	return providers.ModelKey(ref.Provider, ref.Model)
 }
 
 // resolveAgentWorkspace determines the workspace directory for an agent.

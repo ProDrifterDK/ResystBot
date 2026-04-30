@@ -141,6 +141,46 @@ func TestNewAgentLoop_StateInitialized(t *testing.T) {
 	}
 }
 
+func TestAgentLoop_ShutdownDeduplicatesSharedMCPManager(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "agent-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	disabled := false
+	cfg := &config.Config{
+		Agents: config.AgentsConfig{
+			Defaults: config.AgentDefaults{
+				Workspace:         tmpDir,
+				Model:             "test-model",
+				MaxTokens:         4096,
+				MaxToolIterations: 10,
+			},
+			List: []config.AgentConfig{
+				{ID: "main", Default: true, Workspace: filepath.Join(tmpDir, "main")},
+				{ID: "researcher", Workspace: filepath.Join(tmpDir, "researcher")},
+			},
+		},
+		Tools: config.ToolsConfig{
+			MCP: config.MCPConfig{
+				Servers: map[string]config.MCPServerConfig{
+					"disabled-test-server": {
+						Command: "unused",
+						Enabled: &disabled,
+					},
+				},
+			},
+		},
+	}
+
+	al := NewAgentLoop(cfg, bus.NewMessageBus(), &mockProvider{})
+	closed := al.shutdownMCPManagers(context.Background())
+	if closed != 1 {
+		t.Fatalf("shutdownMCPManagers() = %d, want 1 shared manager", closed)
+	}
+}
+
 // TestToolRegistry_ToolRegistration verifies tools can be registered and retrieved
 func TestToolRegistry_ToolRegistration(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "agent-test-*")
