@@ -23,6 +23,7 @@ type ServerConnection struct {
 	Tools            []mcpgo.Tool
 	Config           config.MCPServerConfig
 	mu               sync.RWMutex
+	callMu           sync.Mutex
 	reconnectMu      sync.Mutex
 	connected        bool
 	lastError        error
@@ -33,6 +34,7 @@ type ServerConnection struct {
 type Manager struct {
 	connections map[string]*ServerConnection
 	mu          sync.RWMutex
+	closed      bool
 	connectFn   func(context.Context, string, config.MCPServerConfig) (*ServerConnection, error)
 }
 
@@ -240,7 +242,15 @@ func (m *Manager) GetToolsForServers(serverNames []string) map[string][]mcpgo.To
 }
 
 func (m *Manager) CallTool(ctx context.Context, serverName, toolName string, args map[string]any) (*mcpgo.CallToolResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	m.mu.RLock()
+	if m.closed {
+		m.mu.RUnlock()
+		return nil, fmt.Errorf("MCP manager is shut down")
+	}
 	conn, ok := m.connections[serverName]
 	m.mu.RUnlock()
 
@@ -248,16 +258,22 @@ func (m *Manager) CallTool(ctx context.Context, serverName, toolName string, arg
 		return nil, fmt.Errorf("MCP server %q not found", serverName)
 	}
 
+	conn.callMu.Lock()
 	conn.mu.RLock()
 	connected := conn.connected
+	reconnectVersion := conn.reconnectVersion
+	callTool := conn.callTool
 	conn.mu.RUnlock()
 
 	if !connected {
+		conn.callMu.Unlock()
 		return nil, fmt.Errorf("MCP server %q is not connected", serverName)
 	}
+	if callTool == nil {
+		conn.callMu.Unlock()
+		return nil, fmt.Errorf("MCP server %q has no tool caller", serverName)
+	}
 
-	reconnectVersion := conn.currentReconnectVersion()
-	callTool := conn.callToolFunc()
 	req := mcpgo.CallToolRequest{}
 	req.Params.Name = toolName
 	req.Params.Arguments = cloneStringAnyMap(args)
@@ -270,19 +286,52 @@ func (m *Manager) CallTool(ctx context.Context, serverName, toolName string, arg
 			conn.lastError = err
 			conn.mu.Unlock()
 		}
+		conn.callMu.Unlock()
 		return result, err
 	}
 
-	if reconnectErr := m.reconnectConnection(ctx, serverName, conn, reconnectVersion); reconnectErr != nil {
+	if reconnectErr := m.reconnectConnectionLocked(ctx, serverName, conn, reconnectVersion); reconnectErr != nil {
+		conn.callMu.Unlock()
 		return nil, reconnectErr
 	}
 
 	req.Params.Arguments = cloneStringAnyMap(args)
-	return conn.callToolFunc()(ctx, req)
+
+	m.mu.RLock()
+	closed := m.closed
+	m.mu.RUnlock()
+	if closed {
+		conn.callMu.Unlock()
+		return nil, fmt.Errorf("MCP manager is shut down")
+	}
+
+	conn.mu.RLock()
+	connected = conn.connected
+	callTool = conn.callTool
+	conn.mu.RUnlock()
+	if !connected {
+		conn.callMu.Unlock()
+		return nil, fmt.Errorf("MCP server %q is not connected", serverName)
+	}
+	if callTool == nil {
+		conn.callMu.Unlock()
+		return nil, fmt.Errorf("MCP server %q has no tool caller", serverName)
+	}
+	result, err = callTool(ctx, req)
+	conn.callMu.Unlock()
+	return result, err
 }
 
 func (m *Manager) Reconnect(ctx context.Context, serverName string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	m.mu.RLock()
+	if m.closed {
+		m.mu.RUnlock()
+		return fmt.Errorf("MCP manager is shut down")
+	}
 	conn, ok := m.connections[serverName]
 	m.mu.RUnlock()
 
@@ -301,31 +350,51 @@ func (m *Manager) Reconnect(ctx context.Context, serverName string) error {
 }
 
 func (m *Manager) reconnectConnection(ctx context.Context, serverName string, conn *ServerConnection, reconnectVersion uint64) error {
+	conn.callMu.Lock()
+	defer conn.callMu.Unlock()
+	return m.reconnectConnectionLocked(ctx, serverName, conn, reconnectVersion)
+}
+
+func (m *Manager) reconnectConnectionLocked(ctx context.Context, serverName string, conn *ServerConnection, reconnectVersion uint64) error {
 	conn.reconnectMu.Lock()
 	defer conn.reconnectMu.Unlock()
 
+	m.mu.RLock()
+	closed := m.closed
+	m.mu.RUnlock()
+	if closed {
+		return fmt.Errorf("MCP manager is shut down")
+	}
+
 	conn.mu.RLock()
 	alreadyReconnected := conn.reconnectVersion != reconnectVersion
+	cfg := conn.Config
 	conn.mu.RUnlock()
 	if alreadyReconnected {
 		return nil
 	}
 
 	conn.mu.Lock()
-	defer conn.mu.Unlock()
 
 	if conn.Client != nil {
 		_ = conn.Client.Close()
 	}
 	conn.connected = false
+	conn.mu.Unlock()
 
-	maxRetries := conn.Config.MaxRetries
+	maxRetries := cfg.MaxRetries
 	if maxRetries == 0 {
 		maxRetries = 3
 	}
 
 	var lastErr error
 	for i := 0; i < maxRetries; i++ {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		if i > 0 {
 			backoff := time.Duration(1<<uint(i)) * time.Second
 			select {
@@ -340,7 +409,14 @@ func (m *Manager) reconnectConnection(ctx context.Context, serverName string, co
 			"attempt": i + 1,
 		})
 
-		newConn, err := m.connect(ctx, serverName, conn.Config)
+		m.mu.RLock()
+		closed := m.closed
+		m.mu.RUnlock()
+		if closed {
+			return fmt.Errorf("MCP manager is shut down")
+		}
+
+		newConn, err := m.connect(ctx, serverName, cfg)
 		if err != nil {
 			lastErr = err
 			logger.WarnCF("mcp", "Reconnect attempt failed", map[string]any{
@@ -351,19 +427,33 @@ func (m *Manager) reconnectConnection(ctx context.Context, serverName string, co
 			continue
 		}
 
+		m.mu.RLock()
+		closed = m.closed
+		m.mu.RUnlock()
+		if closed {
+			if newConn.Client != nil {
+				_ = newConn.Client.Close()
+			}
+			return fmt.Errorf("MCP manager is shut down")
+		}
+
+		conn.mu.Lock()
 		conn.Client = newConn.Client
 		conn.Tools = newConn.Tools
 		conn.callTool = newConn.callTool
 		conn.connected = true
 		conn.lastError = nil
 		conn.reconnectVersion++
+		conn.mu.Unlock()
 		logger.InfoCF("mcp", "Successfully reconnected MCP server", map[string]any{
 			"server": serverName,
 		})
 		return nil
 	}
 
+	conn.mu.Lock()
 	conn.lastError = lastErr
+	conn.mu.Unlock()
 	return fmt.Errorf("reconnection failed after %d attempts: %w", maxRetries, lastErr)
 }
 
@@ -475,23 +565,54 @@ func cloneReflectValue(v reflect.Value) reflect.Value {
 }
 
 func (m *Manager) Shutdown(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	if m.closed {
+		m.mu.Unlock()
+		return nil
+	}
+	m.closed = true
+	connections := make(map[string]*ServerConnection, len(m.connections))
+	for name, conn := range m.connections {
+		connections[name] = conn
+	}
+	m.mu.Unlock()
 
 	var lastErr error
-	for name, conn := range m.connections {
-		conn.mu.Lock()
-		if conn.Client != nil {
-			if err := conn.Client.Close(); err != nil {
+	for name, conn := range connections {
+		errCh := make(chan error, 1)
+		go func(name string, conn *ServerConnection) {
+			conn.callMu.Lock()
+			defer conn.callMu.Unlock()
+
+			conn.mu.Lock()
+			defer conn.mu.Unlock()
+
+			if conn.Client != nil {
+				if err := conn.Client.Close(); err != nil {
+					errCh <- err
+					return
+				}
+				conn.connected = false
+			}
+			errCh <- nil
+		}(name, conn)
+
+		select {
+		case err := <-errCh:
+			if err != nil {
 				logger.WarnCF("mcp", "Error closing MCP client", map[string]any{
 					"server": name,
 					"error":  err.Error(),
 				})
 				lastErr = err
 			}
-			conn.connected = false
+		case <-ctx.Done():
+			return ctx.Err()
 		}
-		conn.mu.Unlock()
 		logger.InfoCF("mcp", "Closed MCP server connection", map[string]any{
 			"server": name,
 		})

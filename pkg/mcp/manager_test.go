@@ -211,6 +211,201 @@ func TestReconnect_ConcurrentSafety(t *testing.T) {
 	}
 }
 
+func TestShutdown_ReturnsWhenConnectionIsBusyAndContextExpires(t *testing.T) {
+	manager := &Manager{connections: map[string]*ServerConnection{}}
+	conn := &ServerConnection{Name: "demo", connected: true}
+	conn.callMu.Lock()
+	manager.connections["demo"] = conn
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	err := manager.Shutdown(ctx)
+	conn.callMu.Unlock()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Shutdown() error = %v, want context deadline exceeded", err)
+	}
+}
+
+func TestReconnectAfterShutdownDoesNotConnect(t *testing.T) {
+	var reconnectCalls atomic.Int32
+	manager := &Manager{
+		connections: map[string]*ServerConnection{},
+		connectFn: func(context.Context, string, config.MCPServerConfig) (*ServerConnection, error) {
+			reconnectCalls.Add(1)
+			return &ServerConnection{connected: true}, nil
+		},
+	}
+	manager.connections["demo"] = &ServerConnection{
+		Name:      "demo",
+		Config:    config.MCPServerConfig{MaxRetries: 1},
+		connected: false,
+	}
+
+	if err := manager.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+	if err := manager.Reconnect(context.Background(), "demo"); err == nil {
+		t.Fatal("Reconnect() after Shutdown() succeeded, want error")
+	}
+	if got := reconnectCalls.Load(); got != 0 {
+		t.Fatalf("reconnect count = %d, want 0", got)
+	}
+}
+
+func TestCallToolConcurrentReconnectUsesReconnectedClient(t *testing.T) {
+	ctx := context.Background()
+	initialStarted := make(chan struct{})
+	allowInitial := make(chan struct{})
+	var reconnectCalls atomic.Int32
+	var retryCalls atomic.Int32
+
+	manager := &Manager{
+		connections: map[string]*ServerConnection{},
+		connectFn: func(context.Context, string, config.MCPServerConfig) (*ServerConnection, error) {
+			reconnectCalls.Add(1)
+			return &ServerConnection{
+				Client: mcpclient.NewClient(&mockTransport{}),
+				callTool: func(context.Context, mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+					retryCalls.Add(1)
+					return mcpgo.NewToolResultText("reconnected"), nil
+				},
+				connected: true,
+			}, nil
+		},
+	}
+	manager.connections["demo"] = &ServerConnection{
+		Name:   "demo",
+		Config: config.MCPServerConfig{MaxRetries: 1},
+		callTool: func(context.Context, mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+			close(initialStarted)
+			<-allowInitial
+			return nil, mcptransport.ErrSessionTerminated
+		},
+		connected: true,
+	}
+
+	resultCh := make(chan error, 1)
+	go func() {
+		result, err := manager.CallTool(ctx, "demo", "tool", nil)
+		if err != nil {
+			resultCh <- err
+			return
+		}
+		if len(result.Content) != 1 {
+			resultCh <- errors.New("unexpected result content length")
+			return
+		}
+		resultCh <- nil
+	}()
+
+	select {
+	case <-initialStarted:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for initial call")
+	}
+
+	reconnectCh := make(chan error, 1)
+	go func() {
+		reconnectCh <- manager.Reconnect(ctx, "demo")
+	}()
+
+	close(allowInitial)
+	select {
+	case err := <-resultCh:
+		if err != nil {
+			t.Fatalf("CallTool() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for CallTool")
+	}
+	select {
+	case err := <-reconnectCh:
+		if err != nil {
+			t.Fatalf("Reconnect() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for Reconnect")
+	}
+	if got := reconnectCalls.Load(); got != 1 {
+		t.Fatalf("reconnect count = %d, want 1", got)
+	}
+	if got := retryCalls.Load(); got != 1 {
+		t.Fatalf("retry call count = %d, want 1", got)
+	}
+}
+
+func TestCallToolConcurrentCallWaitsForReconnect(t *testing.T) {
+	ctx := context.Background()
+	initialStarted := make(chan struct{})
+	allowInitial := make(chan struct{})
+	var oldCalls atomic.Int32
+	var newCalls atomic.Int32
+
+	manager := &Manager{
+		connections: map[string]*ServerConnection{},
+		connectFn: func(context.Context, string, config.MCPServerConfig) (*ServerConnection, error) {
+			return &ServerConnection{
+				Client: mcpclient.NewClient(&mockTransport{}),
+				callTool: func(context.Context, mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+					newCalls.Add(1)
+					return mcpgo.NewToolResultText("new-client"), nil
+				},
+				connected: true,
+			}, nil
+		},
+	}
+	manager.connections["demo"] = &ServerConnection{
+		Name:   "demo",
+		Config: config.MCPServerConfig{MaxRetries: 1},
+		callTool: func(context.Context, mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+			oldCalls.Add(1)
+			close(initialStarted)
+			<-allowInitial
+			return nil, mcptransport.ErrSessionTerminated
+		},
+		connected: true,
+	}
+
+	firstResultCh := make(chan error, 1)
+	go func() {
+		_, err := manager.CallTool(ctx, "demo", "tool", nil)
+		firstResultCh <- err
+	}()
+
+	select {
+	case <-initialStarted:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for initial call")
+	}
+
+	secondResultCh := make(chan error, 1)
+	go func() {
+		_, err := manager.CallTool(ctx, "demo", "tool", nil)
+		secondResultCh <- err
+	}()
+
+	close(allowInitial)
+
+	for name, ch := range map[string]chan error{"first": firstResultCh, "second": secondResultCh} {
+		select {
+		case err := <-ch:
+			if err != nil {
+				t.Fatalf("%s CallTool() error = %v", name, err)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for %s CallTool", name)
+		}
+	}
+
+	if got := oldCalls.Load(); got != 1 {
+		t.Fatalf("old client call count = %d, want 1", got)
+	}
+	if got := newCalls.Load(); got != 2 {
+		t.Fatalf("new client call count = %d, want 2", got)
+	}
+}
+
 func TestIsSessionLostError(t *testing.T) {
 	if !isSessionLostError(mcptransport.ErrSessionTerminated) {
 		t.Fatal("expected ErrSessionTerminated to be treated as lost session")
