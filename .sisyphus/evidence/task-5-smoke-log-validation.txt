@@ -1,0 +1,70 @@
+# Task 5 Controlled Smoke + Log Validation
+
+## pre-smoke timestamp capture
+- command: `date -u +"%Y-%m-%d %H:%M:%S"`
+- exit: 0
+- stdout: `2026-04-30 15:50:13`
+- stderr: <empty>
+
+## smoke invocation
+- command: `python3 /home/prodrifterdk/.picoclaw/workspace/cron/test_night_cron_runner_daemon_first.py --case success`
+- exit: 0
+- mode: imported `night_cron_runner.py` through the stdlib-only harness with a fake `tg_listener` module and monkeypatched Telegram send/edit helpers
+- real telegram: disabled
+- real picoclaw spawn: disabled
+- stdout:
+  [PASS] case=success
+  summary: success preserves daemon-first send/edit flow without no-text fallback
+  calls:
+    1. adapter: {'prompt': '<redacted>', 'chat_id': 123456, 'user': 'NightCron', 'username': 'night-success'}
+    2. send_message_get_id: {'chat_id': 123456, 'text': 'Starting daemon response', 'message_id': 1000}
+    3. edit_message: {'chat_id': 123456, 'message_id': 1000, 'text': 'Interim daemon text'}
+    4. edit_message: {'chat_id': 123456, 'message_id': 1000, 'text': 'Final daemon text'}
+- stderr: <empty>
+
+## post-smoke tg_listener.log scan
+- command: |
+    python3 - <<'PY'
+    import json
+    import re
+    from datetime import datetime
+    from pathlib import Path
+
+    ts_raw = "2026-04-30 15:50:13"
+    ts = datetime.strptime(ts_raw, "%Y-%m-%d %H:%M:%S")
+    log_path = Path("/home/prodrifterdk/.picoclaw/workspace/logs/tg_listener.log")
+    forbidden = [
+        "TTFT exceeded",
+        "No output produced by picoclaw process",
+        "Sesión nocturna completada sin respuesta de texto",
+    ]
+    pattern = re.compile(r"^(\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}),\\d{3}")
+    post_entries = []
+    hits = []
+
+    if log_path.exists():
+        for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            match = pattern.match(line)
+            if not match:
+                continue
+            line_ts = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
+            if line_ts >= ts:
+                post_entries.append(line)
+                if any(p in line for p in forbidden):
+                    hits.append(line)
+
+    print(json.dumps({
+        "timestamp_utc": ts_raw,
+        "log_file": str(log_path),
+        "entries_at_or_after_timestamp": len(post_entries),
+        "forbidden_patterns": forbidden,
+        "forbidden_hits": len(hits),
+        "sampled_post_smoke_entries": post_entries[:5],
+    }, ensure_ascii=False, indent=2))
+    PY
+- exit: 0
+- scanned file: `/home/prodrifterdk/.picoclaw/workspace/logs/tg_listener.log`
+- entries at/after smoke timestamp: 0
+- forbidden patterns: `TTFT exceeded`, `No output produced by picoclaw process`, `Sesión nocturna completada sin respuesta de texto`
+- forbidden hits after smoke timestamp: 0
+- sampled post-smoke entries: <none>

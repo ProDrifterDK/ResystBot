@@ -1,0 +1,7 @@
+[PASS] case=success
+summary: success preserves daemon-first send/edit flow without no-text fallback
+calls:
+  1. adapter: {'prompt': '<redacted>', 'chat_id': 123456, 'user': 'NightCron', 'username': 'night-success'}
+  2. send_message_get_id: {'chat_id': 123456, 'text': 'Starting daemon response', 'message_id': 1000}
+  3. edit_message: {'chat_id': 123456, 'message_id': 1000, 'text': 'Interim daemon text'}
+  4. edit_message: {'chat_id': 123456, 'message_id': 1000, 'text': 'Final daemon text'}

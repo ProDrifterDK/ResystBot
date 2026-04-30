@@ -1,0 +1,4 @@
+PASS: handoff does not claim real overnight success.
+PASS: handoff explicitly says real overnight validation is pending.
+PASS: evidence only states py_compile, regression harness, controlled smoke, and post-smoke log scan results.
+PASS: handoff limits static-clean claims to `night_cron_runner.py` and `test_night_cron_runner_daemon_first.py`, not `tg_listener.py`.

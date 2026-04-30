@@ -1,0 +1,5 @@
+[PASS] case=fallback
+summary: fallback/error path emits exactly one visible message without duplicate send/edit loop
+calls:
+  1. adapter: {'prompt': '<redacted>', 'chat_id': 123456, 'user': 'NightCron', 'username': 'night-fallback'}
+  2. send_message: {'chat_id': 123456, 'text': 'Daemon adapter failed cleanly'}

@@ -1,0 +1,8 @@
+PASS: rollback handoff includes both edited operational files.
+PASS: `night_cron_runner.py` backup path and restore command present.
+PASS: `test_night_cron_runner_daemon_first.py` rollback/removal command present; no prior backup found.
+PASS: `tg_listener.py` backup path and restore command present.
+PASS: next overnight checklist covers 01:00 / 03:00 / 05:00 / 07:00 and log path.
+PASS: validation status stays limited to smoke/regression; no real overnight success claim.
+PASS: handoff records the post-review `pyright` directive on `night_cron_runner.py` as non-runtime only.
+PASS: handoff explicitly keeps `tg_listener.py` diagnostics out of scope because they are pre-existing and the file was not edited.

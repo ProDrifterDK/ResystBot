@@ -1,0 +1,30 @@
+# Task 5 Regression Run Evidence
+
+## py_compile
+- command: `python3 -m py_compile /home/prodrifterdk/.picoclaw/workspace/cron/night_cron_runner.py /home/prodrifterdk/.picoclaw/workspace/tg_listener.py /home/prodrifterdk/.picoclaw/workspace/cron/test_night_cron_runner_daemon_first.py`
+- exit: 0
+- stdout: <empty>
+- stderr: <empty>
+
+## full regression harness
+- command: `python3 /home/prodrifterdk/.picoclaw/workspace/cron/test_night_cron_runner_daemon_first.py`
+- exit: 0
+- stdout:
+  [PASS] case=success
+  summary: success preserves daemon-first send/edit flow without no-text fallback
+  calls:
+    1. adapter: {'prompt': '<redacted>', 'chat_id': 123456, 'user': 'NightCron', 'username': 'night-success'}
+    2. send_message_get_id: {'chat_id': 123456, 'text': 'Starting daemon response', 'message_id': 1000}
+    3. edit_message: {'chat_id': 123456, 'message_id': 1000, 'text': 'Interim daemon text'}
+    4. edit_message: {'chat_id': 123456, 'message_id': 1000, 'text': 'Final daemon text'}
+  [PASS] case=fallback
+  summary: fallback/error path emits exactly one visible message without duplicate send/edit loop
+  calls:
+    1. adapter: {'prompt': '<redacted>', 'chat_id': 123456, 'user': 'NightCron', 'username': 'night-fallback'}
+    2. send_message: {'chat_id': 123456, 'text': 'Daemon adapter failed cleanly'}
+  [PASS] case=whitespace
+  summary: whitespace-only daemon output falls back once with no duplicate sends
+  calls:
+    1. adapter: {'prompt': '<redacted>', 'chat_id': 123456, 'user': 'NightCron', 'username': 'night-whitespace'}
+    2. send_message: {'chat_id': 123456, 'text': '⚠️ Sesión nocturna completada sin respuesta de texto.'}
+- stderr: <empty>

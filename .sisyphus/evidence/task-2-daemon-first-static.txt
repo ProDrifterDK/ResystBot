@@ -1,0 +1,4 @@
+import uses daemon adapter: PASS
+runner uses daemon-first call: PASS
+fallback string preserved: PASS
+overall: PASS

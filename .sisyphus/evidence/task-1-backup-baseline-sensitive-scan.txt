@@ -1,0 +1,20 @@
+Sensitive scan: PASS
+
+Target log: `/home/prodrifterdk/.picoclaw/workspace/logs/tg_listener.log`
+
+Final evidence file scan: `/home/prodrifterdk/Documentos/projects/ResystBot/.sisyphus/evidence/task-1-backup-baseline.md`
+- `BOT_TOKEN`: 0 hits
+- `api_key`: 0 hits
+- `Input payload:`: 0 hits
+
+Findings:
+- `BOT_TOKEN`: 0 hits
+- `api_key`: 0 hits
+- `Input payload:`: 4 marker hits
+  - lines 2, 484, 752, 1088
+
+Sanitization notes:
+- No raw bot token or API key values were present in the scanned log snapshot.
+- `Input payload:` markers were captured without expanding any payload body.
+- No full prompt payload blocks were copied into evidence.
+- Final evidence file contains no sensitive markers.

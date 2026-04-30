@@ -1,0 +1,12 @@
+Timestamp (pre-smoke): 2026-04-30T15:32:53Z
+
+Probe target: /home/prodrifterdk/.picoclaw/workspace/logs/tg_listener.log
+Scan rule: inspect only log entries later than the timestamp above.
+
+Forbidden patterns:
+- TTFT exceeded
+- No output produced by picoclaw process
+- Sesión nocturna completada sin respuesta de texto
+
+Window result: 0 log entries after the timestamp; 0 findings for all forbidden patterns.
+Interpretation: pre-smoke baseline. Task 5 must scan only entries after 2026-04-30T15:32:53Z; zero findings is expected until smoke runs.
