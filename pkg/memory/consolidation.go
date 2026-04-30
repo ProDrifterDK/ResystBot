@@ -39,21 +39,36 @@ type ChunkArchiver interface {
 // Phase is a consolidation phase function.
 type Phase func(ctx context.Context, deps *ConsolidationDeps, stats *ConsolidationStats) error
 
-// NamedPhase pairs a phase function with its name for filtering and logging.
+// PhaseDeps declares which services a phase requires.
+// Zero-value means no dependencies — the phase always runs.
+type PhaseDeps struct {
+	Store    bool
+	Embedder bool
+	LLM      bool
+	Archiver bool
+}
+
+// NamedPhase pairs a phase function with its name and dependency declaration.
 type NamedPhase struct {
 	Name string
 	Fn   Phase
+	Deps PhaseDeps
 }
 
 // ConsolidationDeps holds shared dependencies injected into each phase.
 type ConsolidationDeps struct {
-	Store         VectorStore
-	Embedder      Embedder
-	LLM           LLMCompleter
-	Archiver      ChunkArchiver
-	Config        ConsolidationConfig
+	Store    VectorStore
+	Embedder Embedder
+	LLM      LLMCompleter
+	Archiver ChunkArchiver
+	Config   ConsolidationConfig
 	ReflectionDir string
-	DryRun        bool
+	DryRun   bool
+
+	StoreAvailable    bool
+	EmbedderAvailable bool
+	LLMAvailable      bool
+	ArchiverAvailable bool
 }
 
 // ConsolidationConfig holds tunable parameters for consolidation.
@@ -105,12 +120,21 @@ func ScrollAll(ctx context.Context, store VectorStore, withVectors bool) ([]Scro
 	return all, nil
 }
 
-// RunConsolidation executes phases sequentially. Phase errors are logged
-// and recorded in stats but do not abort the pipeline.
+// RunConsolidation executes phases sequentially, skipping those whose deps
+// are unavailable. Returns an error if no phases were attempted (all skipped).
 func RunConsolidation(ctx context.Context, deps *ConsolidationDeps, phases ...NamedPhase) (*ConsolidationStats, error) {
 	stats := &ConsolidationStats{}
+	skipped := 0
 
 	for _, phase := range phases {
+		if !deps.canRun(phase.Deps) {
+			msg := fmt.Sprintf("phase %s skipped: unavailable dependencies", phase.Name)
+			log.Printf("[consolidation] %s", msg)
+			stats.Errors = append(stats.Errors, msg)
+			skipped++
+			continue
+		}
+
 		log.Printf("[consolidation] running phase: %s", phase.Name)
 		if err := phase.Fn(ctx, deps, stats); err != nil {
 			errMsg := fmt.Sprintf("phase %s failed: %v", phase.Name, err)
@@ -121,7 +145,27 @@ func RunConsolidation(ctx context.Context, deps *ConsolidationDeps, phases ...Na
 		}
 	}
 
+	if skipped == len(phases) {
+		return stats, fmt.Errorf("no runnable phases: all %d phases skipped due to unavailable dependencies", len(phases))
+	}
+
 	return stats, nil
+}
+
+func (d *ConsolidationDeps) canRun(deps PhaseDeps) bool {
+	if deps.Store && !d.StoreAvailable {
+		return false
+	}
+	if deps.Embedder && !d.EmbedderAvailable {
+		return false
+	}
+	if deps.LLM && !d.LLMAvailable {
+		return false
+	}
+	if deps.Archiver && !d.ArchiverAvailable {
+		return false
+	}
+	return true
 }
 
 // String returns a human-readable summary of consolidation stats.

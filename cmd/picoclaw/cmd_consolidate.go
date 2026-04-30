@@ -43,45 +43,53 @@ func consolidateCmd() {
 	qdrant := memory.NewQdrantClient(cfg.Memory.GetQdrantURL(), cfg.Memory.GetCollectionName())
 	llm := memory.NewLLMClient(llmBaseURL, llmModel, llmAPIKey)
 
+	if strings.Contains(cfg.Memory.GetEmbeddingURL(), "127.0.0.1:1234") {
+		ensureLMStudioEmbeddings(cfg.Memory.GetEmbeddingModel())
+	}
+
 	ctx := context.Background()
-	if err := qdrant.Ping(ctx); err != nil {
-		fmt.Printf("Qdrant not reachable: %v\n", err)
-		os.Exit(1)
-	}
-	if err := embedder.Ping(ctx); err != nil {
-		fmt.Printf("Embedding service not reachable: %v\n", err)
-		os.Exit(1)
-	}
 
 	archivePath := cfg.Memory.GetArchivePath()
 	if strings.HasPrefix(archivePath, "~/") {
 		home, _ := os.UserHomeDir()
 		archivePath = filepath.Join(home, archivePath[2:])
 	}
-
 	reflectionDir := filepath.Join(cfg.WorkspacePath(), "mind", "reflections")
 
 	deps := &memory.ConsolidationDeps{
-		Store:    qdrant,
-		Embedder: embedder,
-		LLM:      llm,
-		Archiver: memory.NewArchiveWriter(archivePath),
+		Store:             qdrant,
+		Embedder:          embedder,
+		LLM:               llm,
+		Archiver:          memory.NewArchiveWriter(archivePath),
 		Config: memory.ConsolidationConfig{
 			SimilarityThreshold: cfg.Memory.GetSimilarityThreshold(),
 			PruneScoreThreshold: cfg.Memory.GetPruneScoreThreshold(),
 			PruneMinAgeDays:     cfg.Memory.GetPruneMinAgeDays(),
 			DecayRate:           cfg.Memory.GetDecayRate(),
 		},
-		ReflectionDir: reflectionDir,
-		DryRun:        dryRun,
+		ReflectionDir:      reflectionDir,
+		DryRun:             dryRun,
+		StoreAvailable:     true,
+		EmbedderAvailable:  true,
+		LLMAvailable:       true,
+		ArchiverAvailable:  true,
+	}
+
+	if err := qdrant.Ping(ctx); err != nil {
+		log.Printf("[consolidation] Qdrant not reachable: %v", err)
+		deps.StoreAvailable = false
+	}
+	if err := embedder.Ping(ctx); err != nil {
+		log.Printf("[consolidation] Embedding service not reachable: %v", err)
+		deps.EmbedderAvailable = false
 	}
 
 	allPhases := []memory.NamedPhase{
-		{Name: "abstract", Fn: memory.PhaseAbstract},
-		{Name: "strengthen", Fn: memory.PhaseStrengthen},
-		{Name: "score", Fn: memory.PhaseScore},
-		{Name: "prune", Fn: memory.PhasePrune},
-		{Name: "reflect", Fn: memory.PhaseReflect},
+		{Name: "abstract", Fn: memory.PhaseAbstract, Deps: memory.PhaseDeps{Store: true, Embedder: true, LLM: true, Archiver: true}},
+		{Name: "strengthen", Fn: memory.PhaseStrengthen, Deps: memory.PhaseDeps{Store: true}},
+		{Name: "score", Fn: memory.PhaseScore, Deps: memory.PhaseDeps{Store: true}},
+		{Name: "prune", Fn: memory.PhasePrune, Deps: memory.PhaseDeps{Store: true, Archiver: true}},
+		{Name: "reflect", Fn: memory.PhaseReflect, Deps: memory.PhaseDeps{Store: true, Embedder: true, LLM: true}},
 	}
 
 	phases := allPhases
@@ -168,4 +176,32 @@ func ensureLMStudio(modelPath string) bool {
 	}
 
 	return true
+}
+
+func ensureLMStudioEmbeddings(embeddingModel string) {
+	if _, err := exec.LookPath("lms"); err != nil {
+		log.Printf("[lms-embed] lms CLI not found, skipping auto-start")
+		return
+	}
+
+	out, err := exec.Command("lms", "status").CombinedOutput()
+	if err == nil && strings.Contains(string(out), "Running") {
+		log.Printf("[lms-embed] LM Studio server already running")
+		return
+	}
+
+	log.Printf("[lms-embed] starting LM Studio server...")
+	if err := exec.Command("lms", "server", "start").Run(); err != nil {
+		log.Printf("[lms-embed] failed to start server: %v", err)
+		return
+	}
+	time.Sleep(3 * time.Second)
+
+	log.Printf("[lms-embed] loading embedding model: %s", embeddingModel)
+	if err := exec.Command("lms", "load", embeddingModel).Run(); err != nil {
+		log.Printf("[lms-embed] failed to load embedding model: %v", err)
+		return
+	}
+
+	log.Printf("[lms-embed] embedding model loaded")
 }
