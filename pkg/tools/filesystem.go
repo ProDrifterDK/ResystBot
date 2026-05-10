@@ -8,7 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
+
+const maxReadFileBytesForLLM = 256 * 1024
 
 // validatePath ensures the given path is within the workspace if restrict is true.
 func validatePath(path, workspace string, restrict bool) (string, error) {
@@ -125,6 +128,12 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 	content, err := t.fs.ReadFile(path)
 	if err != nil {
 		return ErrorResult(err.Error())
+	}
+	if len(content) > maxReadFileBytesForLLM {
+		return ErrorResult(fmt.Sprintf("read_file refused to load %s: file is %d bytes, above the %d byte safety limit for LLM context", path, len(content), maxReadFileBytesForLLM))
+	}
+	if !utf8.Valid(content) {
+		return ErrorResult(fmt.Sprintf("read_file refused to load %s: file appears to be binary; use an image/media-aware tool instead of reading raw bytes", path))
 	}
 	return NewToolResult(string(content))
 }

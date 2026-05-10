@@ -42,6 +42,39 @@ func TestFilesystemTool_ReadFile_Success(t *testing.T) {
 	}
 }
 
+func TestFilesystemTool_ReadFile_RejectsLargeFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "large.txt")
+	largeContent := strings.Repeat("a", maxReadFileBytesForLLM+1)
+	os.WriteFile(testFile, []byte(largeContent), 0o644)
+
+	tool := NewReadFileTool("", false)
+	result := tool.Execute(context.Background(), map[string]any{"path": testFile})
+
+	if !result.IsError {
+		t.Fatal("expected large file read to be rejected")
+	}
+	if !strings.Contains(result.ForLLM, "safety limit") {
+		t.Errorf("expected safety limit message, got: %s", result.ForLLM)
+	}
+}
+
+func TestFilesystemTool_ReadFile_RejectsBinaryFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "image.png")
+	os.WriteFile(testFile, []byte{0x89, 0x50, 0x4e, 0x47, 0x00, 0xff}, 0o644)
+
+	tool := NewReadFileTool("", false)
+	result := tool.Execute(context.Background(), map[string]any{"path": testFile})
+
+	if !result.IsError {
+		t.Fatal("expected binary file read to be rejected")
+	}
+	if !strings.Contains(result.ForLLM, "binary") {
+		t.Errorf("expected binary message, got: %s", result.ForLLM)
+	}
+}
+
 // TestFilesystemTool_ReadFile_NotFound verifies error handling for missing file
 func TestFilesystemTool_ReadFile_NotFound(t *testing.T) {
 	tool := NewReadFileTool("", false)
