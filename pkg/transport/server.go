@@ -47,6 +47,9 @@ type messageInput struct {
 	ChatID     string `json:"chat_id"`
 	User       string `json:"user"`
 	Username   string `json:"username"`
+	UserID     string `json:"user_id,omitempty"`
+	Role       string `json:"role,omitempty"`
+	IsGuest    bool   `json:"is_guest,omitempty"`
 	Text       string `json:"text"`
 	StreamID   string `json:"stream_id"`
 	ReceivedAt string `json:"received_at,omitempty"`
@@ -317,6 +320,9 @@ func (s *Server) processMessage(stream *Stream, input messageInput) {
 		Metadata: map[string]string{
 			"user":        input.User,
 			"username":    input.Username,
+			"user_id":     input.UserID,
+			"role":        input.Role,
+			"is_guest":    fmt.Sprintf("%t", input.IsGuest),
 			"received_at": input.ReceivedAt,
 		},
 	}
