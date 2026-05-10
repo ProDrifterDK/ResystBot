@@ -15,6 +15,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/constants"
 	"github.com/sipeed/picoclaw/pkg/hooks"
+	"github.com/sipeed/picoclaw/pkg/learning"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/mcp"
 	"github.com/sipeed/picoclaw/pkg/memory"
@@ -24,6 +25,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/skills"
 	"github.com/sipeed/picoclaw/pkg/state"
 	"github.com/sipeed/picoclaw/pkg/tools"
+	"github.com/sipeed/picoclaw/pkg/trace"
 	"github.com/sipeed/picoclaw/pkg/utils"
 	"path/filepath"
 	"strings"
@@ -44,11 +46,15 @@ type AgentLoop struct {
 	channelManager         *channels.Manager
 	subagentManagers       map[string]*tools.SubagentManager
 	memoryWriter           *memory.WriteHandler
+	traceWriter            *trace.TraceWriter
+	outcomeExtractor       *learning.OutcomeExtractor
 	LastUsage              *providers.UsageInfo
 	LastContextEstimate    int
 	reconsolidationHandler *memory.ReconsolidationHandler
 	hookExecutor           *hooks.HookExecutor
 }
+
+var initializeLearningRuntime = learning.InitializeRuntime
 
 // processOptions configures how a message is processed
 type processOptions struct {
@@ -126,6 +132,32 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 			reconLLM := memory.NewLLMClient(llmBaseURL, llmModel, "lm-studio")
 			reconLogDir := filepath.Join(cfg.WorkspacePath(), "mind", "reconsolidation")
 			al.reconsolidationHandler = memory.NewReconsolidationHandler(embedClient, reconLLM, qdrantClient, reconLogDir)
+		}
+	}
+
+	traceDir := filepath.Join(cfg.WorkspacePath(), "mind", "traces")
+	al.traceWriter = trace.NewTraceWriterWithConfig(traceDir, &cfg.Learning)
+
+	if cfg.Learning.Enabled {
+		learningRuntime, err := initializeLearningRuntime(context.Background(), &cfg.Learning)
+		if err != nil {
+			logger.WarnCF("agent", "Learning system unavailable, disabling for this process", map[string]any{
+				"collection": cfg.Learning.GetCollectionName(),
+				"error":      err.Error(),
+			})
+		} else {
+			al.outcomeExtractor = learningRuntime.OutcomeExtractor
+			for _, agentID := range registry.ListAgentIDs() {
+				agent, ok := registry.GetAgent(agentID)
+				if !ok || agent.ContextBuilder == nil {
+					continue
+				}
+				agent.ContextBuilder.SetLearningRetriever(learningRuntime.Retriever, &cfg.Learning)
+			}
+			logger.InfoCF("agent", "Learning system enabled", map[string]any{
+				"collection":  cfg.Learning.GetCollectionName(),
+				"vector_size": learningRuntime.VectorSize,
+			})
 		}
 	}
 
@@ -640,6 +672,13 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		agent = al.registry.GetDefaultAgent()
 	}
 
+	// Inject message received timestamp into prompt for natural time awareness
+	if agent.ContextBuilder != nil {
+		if receivedAt, ok := msg.Metadata["received_at"]; ok && receivedAt != "" {
+			agent.ContextBuilder.SetReceivedAt(receivedAt)
+		}
+	}
+
 	// Use routed session key, but honor pre-set agent-scoped keys (for ProcessDirect/cron)
 	sessionKey := route.SessionKey
 	if msg.SessionKey != "" && strings.HasPrefix(msg.SessionKey, "agent:") {
@@ -724,6 +763,48 @@ func (al *AgentLoop) processSystemMessage(ctx context.Context, msg bus.InboundMe
 
 // runAgentLoop is the core message processing logic.
 func (al *AgentLoop) runAgentLoop(ctx context.Context, agent *AgentInstance, opts processOptions) (string, error) {
+	collector := trace.NewTurnTraceCollector(opts.SessionKey, agent.ID, opts.Channel, opts.ChatID, opts.UserMessage)
+	collector.SetInjectedLearningIDs(nil)
+	var iteration int
+	var finalContent string
+	var exitReason string
+	var runErr error
+	defer func() {
+		if collector == nil {
+			return
+		}
+		usedDefault := false
+		traceContent := finalContent
+		if traceContent == "" && runErr == nil {
+			traceContent = opts.DefaultResponse
+			usedDefault = traceContent != ""
+		}
+		collector.FinalizeWithExitReason(traceContent, usedDefault, iteration, exitReason, runErr)
+		traceRecord := collector.Build()
+		if al.traceWriter != nil {
+			traceCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := al.traceWriter.WriteTrace(traceCtx, traceRecord); err != nil {
+				logger.WarnCF("agent", "Failed to write turn trace", map[string]any{
+					"agent_id":    agent.ID,
+					"session_key": opts.SessionKey,
+					"error":       err.Error(),
+				})
+			}
+		}
+		if al.outcomeExtractor != nil {
+			outcomeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if _, err := al.outcomeExtractor.ProcessTrace(outcomeCtx, traceRecord); err != nil {
+				logger.WarnCF("agent", "Failed to extract learning outcome", map[string]any{
+					"agent_id":    agent.ID,
+					"session_key": opts.SessionKey,
+					"error":       err.Error(),
+				})
+			}
+		}
+	}()
+
 	// 0. Record last channel for heartbeat notifications (skip internal channels)
 	if opts.Channel != "" && opts.ChatID != "" {
 		// Don't record internal channels (cli, system, subagent)
@@ -777,20 +858,48 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, agent *AgentInstance, opt
 		ChatID:      opts.ChatID,
 	})
 	if err != nil {
+		runErr = err
 		return "", err
 	}
 	messages := assembleResp.Messages
+	if len(messages) > 0 {
+		collector.SetSystemPromptChars(len(messages[0].Content))
+	}
+	injectedChunks := agent.ContextBuilder.GetInjectedChunks()
+	if len(injectedChunks) > 0 {
+		memoryIDs := make([]string, 0, len(injectedChunks))
+		for _, chunk := range injectedChunks {
+			if chunk.ID == "" {
+				continue
+			}
+			memoryIDs = append(memoryIDs, chunk.ID)
+		}
+		collector.SetInjectedMemoryIDs(memoryIDs)
+	}
+	injectedLessons := agent.ContextBuilder.GetInjectedLessons()
+	if len(injectedLessons) > 0 {
+		lessonIDs := make([]string, 0, len(injectedLessons))
+		for _, lesson := range injectedLessons {
+			if lesson.ID == "" {
+				continue
+			}
+			lessonIDs = append(lessonIDs, lesson.ID)
+		}
+		collector.SetInjectedLearningIDs(lessonIDs)
+	}
 
 	// 3. Save user message to session (original, not modified by hooks)
 	agent.Sessions.AddMessage(opts.SessionKey, "user", opts.UserMessage)
 
 	// 4. Run LLM iteration loop
-	finalMsg, iteration, err := al.runLLMIteration(ctx, agent, messages, opts)
+	finalMsg, iteration, err := al.runLLMIteration(ctx, agent, messages, opts, collector)
 	if err != nil {
+		runErr = err
+		exitReason = trace.ExitReasonLLMError
 		return "", err
 	}
 
-	finalContent := finalMsg.Content
+	finalContent = finalMsg.Content
 
 	// If last tool had ForUser content and we already sent it, we might not need to send final response
 	// This is controlled by the tool's Silent flag and ForUser content
@@ -798,6 +907,9 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, agent *AgentInstance, opt
 	// 5. Handle empty response
 	if finalContent == "" {
 		finalContent = opts.DefaultResponse
+	}
+	if finalContent == opts.DefaultResponse && opts.DefaultResponse != "" {
+		exitReason = trace.ExitReasonDefaultResponse
 	}
 
 	// 6. Save final assistant message to session
@@ -874,6 +986,7 @@ func (al *AgentLoop) runLLMIteration(
 	agent *AgentInstance,
 	messages []providers.Message,
 	opts processOptions,
+	collector *trace.TurnTraceCollector,
 ) (providers.Message, int, error) {
 	iteration := 0
 	var finalMsg providers.Message
@@ -923,7 +1036,7 @@ func (al *AgentLoop) runLLMIteration(
 		var response *providers.LLMResponse
 		var err error
 
-		callLLM := func() (*providers.LLMResponse, error) {
+		callLLM := func() (*providers.LLMResponse, *providers.FallbackResult, error) {
 			llmOpts := map[string]any{
 				"max_tokens":  agent.MaxTokens,
 				"temperature": agent.Temperature,
@@ -950,16 +1063,17 @@ func (al *AgentLoop) runLLMIteration(
 					validator,
 				)
 				if fbErr != nil {
-					return nil, fbErr
+					return nil, nil, fbErr
 				}
 				if fbResult.Provider != "" && len(fbResult.Attempts) > 0 {
 					logger.InfoCF("agent", fmt.Sprintf("Fallback: succeeded with %s/%s after %d attempts",
 						fbResult.Provider, fbResult.Model, len(fbResult.Attempts)+1),
 						map[string]any{"agent_id": agent.ID, "iteration": iteration})
 				}
-				return fbResult.Response, nil
+				return fbResult.Response, fbResult, nil
 			}
-			return agent.Provider.Chat(ctx, messages, providerToolDefs, agent.Model, llmOpts)
+			response, err := agent.Provider.Chat(ctx, messages, providerToolDefs, agent.Model, llmOpts)
+			return response, nil, err
 		}
 
 		// Sanitize messages before every LLM call to guard against orphaned tool call/result pairs
@@ -968,7 +1082,57 @@ func (al *AgentLoop) runLLMIteration(
 		// Retry loop for context/token errors
 		maxRetries := 3
 		for retry := 0; retry <= maxRetries; retry++ {
-			response, err = callLLM()
+			llmStart := time.Now()
+			var fbResult *providers.FallbackResult
+			response, fbResult, err = callLLM()
+			llmDurationMs := time.Since(llmStart).Milliseconds()
+			if collector != nil {
+				if fbResult != nil && len(fbResult.Attempts) > 0 {
+					collector.RecordFallbackAttempts(fbResult.Attempts)
+				}
+				if err != nil {
+					if exhausted, ok := err.(*providers.FallbackExhaustedError); ok && len(exhausted.Attempts) > 0 {
+						collector.RecordFallbackAttempts(exhausted.Attempts)
+					}
+					providerName := "unknown"
+					modelName := agent.Model
+					if fbResult != nil {
+						if fbResult.Provider != "" {
+							providerName = fbResult.Provider
+						}
+						if fbResult.Model != "" {
+							modelName = fbResult.Model
+						}
+					} else if len(agent.Candidates) > 0 {
+						providerName = agent.Candidates[0].Provider
+						if agent.Candidates[0].Model != "" {
+							modelName = agent.Candidates[0].Model
+						}
+					}
+					collector.RecordLLMCall(modelName, providerName, 0, llmDurationMs)
+				} else if response != nil {
+					tokens := 0
+					if response.Usage != nil {
+						tokens = response.Usage.TotalTokens
+					}
+					providerName := "unknown"
+					modelName := agent.Model
+					if fbResult != nil {
+						if fbResult.Provider != "" {
+							providerName = fbResult.Provider
+						}
+						if fbResult.Model != "" {
+							modelName = fbResult.Model
+						}
+					} else if len(agent.Candidates) > 0 {
+						providerName = agent.Candidates[0].Provider
+						if agent.Candidates[0].Model != "" {
+							modelName = agent.Candidates[0].Model
+						}
+					}
+					collector.RecordLLMCall(modelName, providerName, tokens, llmDurationMs)
+				}
+			}
 			if err == nil {
 				break
 			}
@@ -980,6 +1144,7 @@ func (al *AgentLoop) runLLMIteration(
 				strings.Contains(errMsg, "n_keep") ||
 				strings.Contains(errMsg, "max_tokens") ||
 				strings.Contains(errMsg, "too many tokens") ||
+				strings.Contains(errMsg, "prompt exceeds max length") ||
 				strings.Contains(errMsg, "prompt is too long") ||
 				strings.Contains(errMsg, "invalidparameter") ||
 				strings.Contains(errMsg, "requested_max_context") ||
@@ -1199,6 +1364,7 @@ func (al *AgentLoop) runLLMIteration(
 				}
 			}
 
+			toolStart := time.Now()
 			toolResult := agent.Tools.ExecuteWithContext(
 				ctx,
 				tc.Name,
@@ -1207,6 +1373,19 @@ func (al *AgentLoop) runLLMIteration(
 				opts.ChatID,
 				asyncCallback,
 			)
+			if collector != nil {
+				contentForTrace := toolResult.ForLLM
+				if contentForTrace == "" && toolResult.Err != nil {
+					contentForTrace = toolResult.Err.Error()
+				}
+				collector.RecordToolCall(
+					tc.Name,
+					tc.Arguments,
+					contentForTrace,
+					toolResult.IsError,
+					time.Since(toolStart).Milliseconds(),
+				)
+			}
 			agent.ContextBuilder.RecordToolCall(tc.Name, opts.SessionKey)
 
 			// Send ForUser content to user immediately if not Silent
