@@ -9,6 +9,31 @@ import (
 	"github.com/sipeed/picoclaw/pkg/logger"
 )
 
+const transientCandidateRetries = 2
+
+var transientRetryBaseDelay = 500 * time.Millisecond
+
+func shouldRetryCandidate(reason FailoverReason) bool {
+	switch reason {
+	case FailoverRateLimit, FailoverTimeout, FailoverNetwork, FailoverOverloaded:
+		return true
+	default:
+		return false
+	}
+}
+
+func waitBeforeCandidateRetry(ctx context.Context, attempt int) error {
+	delay := time.Duration(attempt+1) * transientRetryBaseDelay
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
 // FallbackChain orchestrates model fallback across multiple candidates.
 type FallbackChain struct {
 	cooldown *CooldownTracker
@@ -168,56 +193,76 @@ func (fc *FallbackChain) Execute(
 			}
 		}
 
-		// Execute the run function.
-		start := time.Now()
-		resp, err := run(ctx, candidate.Provider, candidate.Model)
-		elapsed := time.Since(start)
+		var failErr *FailoverError
+		var elapsed time.Duration
 
-		if err == nil {
-			// Success.
-			fc.cooldown.MarkSuccess(cooldownKey)
-			result.Response = resp
-			result.Provider = candidate.Provider
-			result.Model = candidate.Model
-			return result, nil
-		}
+		for attempt := 0; ; attempt++ {
+			start := time.Now()
+			resp, err := run(ctx, candidate.Provider, candidate.Model)
+			elapsed = time.Since(start)
 
-		// Context cancellation: abort immediately, no fallback.
-		if ctx.Err() == context.Canceled {
-			result.Attempts = append(result.Attempts, FallbackAttempt{
-				Provider: candidate.Provider,
-				Model:    candidate.Model,
-				Error:    err,
-				Duration: elapsed,
-			})
-			return nil, context.Canceled
-		}
+			if err == nil {
+				// Success.
+				fc.cooldown.MarkSuccess(cooldownKey)
+				result.Response = resp
+				result.Provider = candidate.Provider
+				result.Model = candidate.Model
+				return result, nil
+			}
 
-		// Classify the error.
-		failErr := ClassifyError(err, candidate.Provider, candidate.Model)
+			// Context cancellation: abort immediately, no fallback.
+			if ctx.Err() == context.Canceled {
+				result.Attempts = append(result.Attempts, FallbackAttempt{
+					Provider: candidate.Provider,
+					Model:    candidate.Model,
+					Error:    err,
+					Duration: elapsed,
+				})
+				return nil, context.Canceled
+			}
 
-		if failErr == nil {
-			// Unclassifiable error: do not fallback, return immediately.
-			result.Attempts = append(result.Attempts, FallbackAttempt{
-				Provider: candidate.Provider,
-				Model:    candidate.Model,
-				Error:    err,
-				Duration: elapsed,
-			})
-			return nil, fmt.Errorf("fallback: unclassified error from %s/%s: %w",
-				candidate.Provider, candidate.Model, err)
-		}
+			// Classify the error.
+			failErr = ClassifyError(err, candidate.Provider, candidate.Model)
 
-		// Non-retriable error: abort immediately.
-		if !failErr.IsRetriable() {
-			result.Attempts = append(result.Attempts, FallbackAttempt{
-				Provider: candidate.Provider,
-				Model:    candidate.Model,
-				Error:    failErr,
-				Reason:   failErr.Reason,
-				Duration: elapsed,
-			})
-			return nil, failErr
+			if failErr == nil {
+				// Unclassifiable error: do not fallback, return immediately.
+				result.Attempts = append(result.Attempts, FallbackAttempt{
+					Provider: candidate.Provider,
+					Model:    candidate.Model,
+					Error:    err,
+					Duration: elapsed,
+				})
+				return nil, fmt.Errorf("fallback: unclassified error from %s/%s: %w",
+					candidate.Provider, candidate.Model, err)
+			}
+
+			// Non-retriable error: abort immediately.
+			if !failErr.IsRetriable() {
+				result.Attempts = append(result.Attempts, FallbackAttempt{
+					Provider: candidate.Provider,
+					Model:    candidate.Model,
+					Error:    failErr,
+					Reason:   failErr.Reason,
+					Duration: elapsed,
+				})
+				return nil, failErr
+			}
+
+			if shouldRetryCandidate(failErr.Reason) && attempt < transientCandidateRetries {
+				logger.WarnCF("fallback", "Transient provider error, retrying candidate before cooldown", map[string]any{
+					"provider": candidate.Provider,
+					"model":    candidate.Model,
+					"reason":   failErr.Reason,
+					"attempt":  attempt + 1,
+					"max":      transientCandidateRetries + 1,
+					"error":    failErr.Error(),
+				})
+				if waitErr := waitBeforeCandidateRetry(ctx, attempt); waitErr != nil {
+					return nil, waitErr
+				}
+				continue
+			}
+			break
 		}
 
 		// Retriable error: mark failure and continue to next candidate.
@@ -234,6 +279,7 @@ func (fc *FallbackChain) Execute(
 		if i == len(candidates)-1 {
 			return nil, &FallbackExhaustedError{Attempts: result.Attempts}
 		}
+
 	}
 
 	// All candidates were skipped (all in cooldown).
@@ -287,73 +333,94 @@ func (fc *FallbackChain) ExecuteWithValidator(
 			continue
 		}
 
-		start := time.Now()
-		resp, err := run(ctx, candidate.Provider, candidate.Model)
-		elapsed := time.Since(start)
+		var failErr *FailoverError
+		var elapsed time.Duration
 
-		if err == nil {
-			fc.cooldown.MarkSuccess(cooldownKey)
+		for attempt := 0; ; attempt++ {
+			start := time.Now()
+			resp, err := run(ctx, candidate.Provider, candidate.Model)
+			elapsed = time.Since(start)
 
-			if validator != nil && !validator(resp) {
-				logger.WarnCF("fallback", fmt.Sprintf("Provider %s model %s returned unacceptable response, trying next fallback",
-					candidate.Provider, candidate.Model),
-					map[string]any{
-						"provider": candidate.Provider,
-						"model":    candidate.Model,
+			if err == nil {
+				fc.cooldown.MarkSuccess(cooldownKey)
+
+				if validator != nil && !validator(resp) {
+					logger.WarnCF("fallback", fmt.Sprintf("Provider %s model %s returned unacceptable response, trying next fallback",
+						candidate.Provider, candidate.Model),
+						map[string]any{
+							"provider": candidate.Provider,
+							"model":    candidate.Model,
+						})
+					result.Attempts = append(result.Attempts, FallbackAttempt{
+						Provider: candidate.Provider,
+						Model:    candidate.Model,
+						Duration: elapsed,
+						Reason:   FailoverReason("empty_response"),
 					})
+					lastValidatorReject = &FallbackResult{
+						Response: resp,
+						Provider: candidate.Provider,
+						Model:    candidate.Model,
+						Attempts: result.Attempts,
+					}
+					continue
+				}
+
+				result.Response = resp
+				result.Provider = candidate.Provider
+				result.Model = candidate.Model
+				return result, nil
+			}
+
+			if ctx.Err() == context.Canceled {
 				result.Attempts = append(result.Attempts, FallbackAttempt{
 					Provider: candidate.Provider,
 					Model:    candidate.Model,
+					Error:    err,
 					Duration: elapsed,
-					Reason:   FailoverReason("empty_response"),
 				})
-				lastValidatorReject = &FallbackResult{
-					Response: resp,
+				return nil, context.Canceled
+			}
+
+			failErr = ClassifyError(err, candidate.Provider, candidate.Model)
+
+			if failErr == nil {
+				result.Attempts = append(result.Attempts, FallbackAttempt{
 					Provider: candidate.Provider,
 					Model:    candidate.Model,
-					Attempts: result.Attempts,
+					Error:    err,
+					Duration: elapsed,
+				})
+				return nil, fmt.Errorf("fallback: unclassified error from %s/%s: %w",
+					candidate.Provider, candidate.Model, err)
+			}
+
+			if !failErr.IsRetriable() {
+				result.Attempts = append(result.Attempts, FallbackAttempt{
+					Provider: candidate.Provider,
+					Model:    candidate.Model,
+					Error:    failErr,
+					Reason:   failErr.Reason,
+					Duration: elapsed,
+				})
+				return nil, failErr
+			}
+
+			if shouldRetryCandidate(failErr.Reason) && attempt < transientCandidateRetries {
+				logger.WarnCF("fallback", "Transient provider error, retrying candidate before cooldown", map[string]any{
+					"provider": candidate.Provider,
+					"model":    candidate.Model,
+					"reason":   failErr.Reason,
+					"attempt":  attempt + 1,
+					"max":      transientCandidateRetries + 1,
+					"error":    failErr.Error(),
+				})
+				if waitErr := waitBeforeCandidateRetry(ctx, attempt); waitErr != nil {
+					return nil, waitErr
 				}
 				continue
 			}
-
-			result.Response = resp
-			result.Provider = candidate.Provider
-			result.Model = candidate.Model
-			return result, nil
-		}
-
-		if ctx.Err() == context.Canceled {
-			result.Attempts = append(result.Attempts, FallbackAttempt{
-				Provider: candidate.Provider,
-				Model:    candidate.Model,
-				Error:    err,
-				Duration: elapsed,
-			})
-			return nil, context.Canceled
-		}
-
-		failErr := ClassifyError(err, candidate.Provider, candidate.Model)
-
-		if failErr == nil {
-			result.Attempts = append(result.Attempts, FallbackAttempt{
-				Provider: candidate.Provider,
-				Model:    candidate.Model,
-				Error:    err,
-				Duration: elapsed,
-			})
-			return nil, fmt.Errorf("fallback: unclassified error from %s/%s: %w",
-				candidate.Provider, candidate.Model, err)
-		}
-
-		if !failErr.IsRetriable() {
-			result.Attempts = append(result.Attempts, FallbackAttempt{
-				Provider: candidate.Provider,
-				Model:    candidate.Model,
-				Error:    failErr,
-				Reason:   failErr.Reason,
-				Duration: elapsed,
-			})
-			return nil, failErr
+			break
 		}
 
 		fc.cooldown.MarkFailure(cooldownKey, failErr.Reason)

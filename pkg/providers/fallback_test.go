@@ -11,6 +11,10 @@ func makeCandidate(provider, model string) FallbackCandidate {
 	return FallbackCandidate{Provider: provider, Model: model}
 }
 
+func init() {
+	transientRetryBaseDelay = time.Millisecond
+}
+
 func successRun(content string) func(ctx context.Context, provider, model string) (*LLMResponse, error) {
 	return func(ctx context.Context, provider, model string) (*LLMResponse, error) {
 		return &LLMResponse{Content: content, FinishReason: "stop"}, nil
@@ -47,7 +51,7 @@ func TestFallback_SecondCandidateSuccess(t *testing.T) {
 	run := func(ctx context.Context, provider, model string) (*LLMResponse, error) {
 		attempt++
 		if attempt == 1 {
-			return nil, errors.New("rate limit exceeded")
+			return nil, errors.New("401 unauthorized")
 		}
 		return &LLMResponse{Content: "from claude", FinishReason: "stop"}, nil
 	}
@@ -67,7 +71,7 @@ func TestFallback_SecondCandidateSuccess(t *testing.T) {
 	}
 }
 
-func TestFallback_RetryOnNetworkError(t *testing.T) {
+func TestFallback_RetriesNetworkErrorBeforeFallback(t *testing.T) {
 	ct := NewCooldownTracker()
 	fc := NewFallbackChain(ct)
 
@@ -79,24 +83,27 @@ func TestFallback_RetryOnNetworkError(t *testing.T) {
 	attempt := 0
 	run := func(ctx context.Context, provider, model string) (*LLMResponse, error) {
 		attempt++
-		if attempt == 1 {
+		if provider == "openai" && attempt == 1 {
 			return nil, errors.New("dial tcp 192.168.1.1:443: connection refused")
 		}
-		return &LLMResponse{Content: "from claude", FinishReason: "stop"}, nil
+		return &LLMResponse{Content: "from retry", FinishReason: "stop"}, nil
 	}
 
 	result, err := fc.Execute(context.Background(), candidates, run)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Provider != "anthropic" {
-		t.Errorf("provider = %q, want anthropic", result.Provider)
+	if result.Provider != "openai" {
+		t.Errorf("provider = %q, want openai after retry", result.Provider)
 	}
-	if len(result.Attempts) != 1 {
-		t.Fatalf("attempts = %d, want 1", len(result.Attempts))
+	if result.Response.Content != "from retry" {
+		t.Errorf("content = %q, want from retry", result.Response.Content)
 	}
-	if result.Attempts[0].Reason != FailoverNetwork {
-		t.Errorf("reason = %q, want network", result.Attempts[0].Reason)
+	if len(result.Attempts) != 0 {
+		t.Fatalf("attempts = %d, want 0 because retry recovered before cooldown", len(result.Attempts))
+	}
+	if attempt != 2 {
+		t.Fatalf("run attempts = %d, want 2", attempt)
 	}
 }
 
@@ -526,7 +533,7 @@ func TestFallback_SharedProviderIndependentCooldown(t *testing.T) {
 	run := func(ctx context.Context, provider, model string) (*LLMResponse, error) {
 		attempt++
 		if attempt == 1 {
-			return nil, errors.New("rate limit exceeded")
+			return nil, errors.New("401 unauthorized")
 		}
 		return &LLMResponse{Content: "from fallback", FinishReason: "stop"}, nil
 	}
@@ -684,5 +691,40 @@ func TestFallback_RateLimiterRegistry_NilBackwardCompat(t *testing.T) {
 	}
 	if result.Provider != "openai" || result.Model != "gpt-4" {
 		t.Fatalf("provider/model = %s/%s, want openai/gpt-4", result.Provider, result.Model)
+	}
+}
+
+func TestFallbackWithValidator_RetriesRateLimitBeforeCooldown(t *testing.T) {
+	ct := NewCooldownTracker()
+	fc := NewFallbackChain(ct)
+
+	candidates := []FallbackCandidate{makeCandidate("deepseek", "deepseek-v4-flash")}
+
+	attempt := 0
+	run := func(ctx context.Context, provider, model string) (*LLMResponse, error) {
+		attempt++
+		if attempt == 1 {
+			return nil, errors.New("HTTP 429: transient rate limit")
+		}
+		return &LLMResponse{Content: "OK", FinishReason: "stop"}, nil
+	}
+
+	result, err := fc.ExecuteWithValidator(context.Background(), candidates, run, func(resp *LLMResponse) bool {
+		return resp != nil && resp.Content != ""
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Provider != "deepseek" || result.Model != "deepseek-v4-flash" {
+		t.Fatalf("provider/model = %s/%s, want deepseek/deepseek-v4-flash", result.Provider, result.Model)
+	}
+	if attempt != 2 {
+		t.Fatalf("run attempts = %d, want 2", attempt)
+	}
+	if len(result.Attempts) != 0 {
+		t.Fatalf("attempts = %d, want 0 because retry recovered before cooldown", len(result.Attempts))
+	}
+	if !ct.IsAvailable(ModelKey("deepseek", "deepseek-v4-flash")) {
+		t.Fatal("candidate should not be in cooldown after retry recovery")
 	}
 }
