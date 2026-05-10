@@ -138,7 +138,7 @@ func (r *ToolRegistry) ExecuteWithContext(
 
 	if hookExec != nil {
 		responseBytes, _ := json.Marshal(result.ForLLM)
-		hookExec.RunPostToolUse(ctx, name, args, string(responseBytes), sessionID)
+		hookExec.RunPostToolUse(ctx, name, args, string(responseBytes), !result.IsError, result.IsError, sessionID)
 	}
 
 	// Log based on result type

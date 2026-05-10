@@ -2,10 +2,16 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/picoclaw/pkg/hooks"
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
@@ -43,6 +49,23 @@ type mockAsyncRegistryTool struct {
 
 func (m *mockAsyncRegistryTool) SetCallback(cb AsyncCallback) {
 	m.cb = cb
+}
+
+func writeRegistryHookScript(t *testing.T, name, content string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+content), 0o755); err != nil {
+		t.Fatalf("write helper script: %v", err)
+	}
+	return path
+}
+
+func skipRegistryIfNoSh(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available")
+	}
 }
 
 // --- helpers ---
@@ -189,6 +212,94 @@ func TestToolRegistry_ExecuteWithContext_AsyncCallback(t *testing.T) {
 	at.cb(context.Background(), SilentResult("done"))
 	if !called {
 		t.Error("expected callback to be invoked")
+	}
+}
+
+func TestToolRegistry_ExecuteWithContext_PostToolUseSuccessSignals(t *testing.T) {
+	skipRegistryIfNoSh(t)
+	tmpDir := t.TempDir()
+	outFile := filepath.Join(tmpDir, "post-success.json")
+	script := writeRegistryHookScript(t, "capture-success.sh", "cat > \""+outFile+"\"")
+
+	r := NewToolRegistry()
+	r.Register(&mockRegistryTool{
+		name:   "greet",
+		desc:   "says hello",
+		params: map[string]any{},
+		result: SilentResult("hello"),
+	})
+	r.SetHookExecutor(hooks.NewHookExecutor(&config.HooksConfig{
+		PostToolUse: []config.HookMatcher{{
+			Matcher: "greet",
+			Hooks:   []config.HookEntry{{Type: "command", Command: script}},
+		}},
+	}))
+
+	result := r.ExecuteWithContext(context.Background(), "greet", map[string]any{"name": "world"}, "telegram", "chat-1", nil)
+	if result.IsError {
+		t.Fatalf("expected success result, got error: %s", result.ForLLM)
+	}
+
+	data, err := os.ReadFile(outFile)
+	if err != nil {
+		t.Fatalf("read hook payload: %v", err)
+	}
+	var input hooks.HookInput
+	if err := json.Unmarshal(data, &input); err != nil {
+		t.Fatalf("unmarshal hook payload: %v", err)
+	}
+	if !input.ToolSuccess {
+		t.Fatal("expected tool_success=true")
+	}
+	if input.ToolIsError {
+		t.Fatal("expected tool_is_error=false")
+	}
+	if input.ToolResponse != `"hello"` {
+		t.Fatalf("expected JSON string response, got %q", input.ToolResponse)
+	}
+}
+
+func TestToolRegistry_ExecuteWithContext_PostToolUseErrorSignals(t *testing.T) {
+	skipRegistryIfNoSh(t)
+	tmpDir := t.TempDir()
+	outFile := filepath.Join(tmpDir, "post-error.json")
+	script := writeRegistryHookScript(t, "capture-error.sh", "cat > \""+outFile+"\"")
+
+	r := NewToolRegistry()
+	r.Register(&mockRegistryTool{
+		name:   "fail",
+		desc:   "fails",
+		params: map[string]any{},
+		result: ErrorResult("boom"),
+	})
+	r.SetHookExecutor(hooks.NewHookExecutor(&config.HooksConfig{
+		PostToolUse: []config.HookMatcher{{
+			Matcher: "fail",
+			Hooks:   []config.HookEntry{{Type: "command", Command: script}},
+		}},
+	}))
+
+	result := r.ExecuteWithContext(context.Background(), "fail", map[string]any{"name": "world"}, "telegram", "chat-1", nil)
+	if !result.IsError {
+		t.Fatal("expected error result")
+	}
+
+	data, err := os.ReadFile(outFile)
+	if err != nil {
+		t.Fatalf("read hook payload: %v", err)
+	}
+	var input hooks.HookInput
+	if err := json.Unmarshal(data, &input); err != nil {
+		t.Fatalf("unmarshal hook payload: %v", err)
+	}
+	if input.ToolSuccess {
+		t.Fatal("expected tool_success=false")
+	}
+	if !input.ToolIsError {
+		t.Fatal("expected tool_is_error=true")
+	}
+	if input.ToolResponse != `"boom"` {
+		t.Fatalf("expected JSON string response, got %q", input.ToolResponse)
 	}
 }
 
