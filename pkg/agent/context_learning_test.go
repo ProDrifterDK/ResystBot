@@ -143,3 +143,26 @@ func TestContextBuilderInjectedLessonsClearedBetweenBuilds(t *testing.T) {
 	require.NotContains(t, second[0].Content, "## Past Learnings (use these to avoid repeating mistakes)")
 	require.Nil(t, cb.GetInjectedLessons())
 }
+
+func TestContextBuilderBuildMessagesInjectsCurrentInterlocutor(t *testing.T) {
+	cb := newLearningTestContextBuilder(t)
+
+	messages := cb.BuildMessages(context.Background(), nil, "", "hola", nil, "telegram", "101293943", UserIdentity{
+		SenderID:    "101293943|xaskasdf",
+		UserID:      "101293943",
+		Username:    "xaskasdf",
+		DisplayName: "Samuel",
+		Role:        "guest",
+		IsGuest:     true,
+	})
+
+	require.Len(t, messages, 2)
+	prompt := messages[0].Content
+	require.Contains(t, prompt, "## Current Interlocutor")
+	require.Contains(t, prompt, "Display name: Samuel")
+	require.Contains(t, prompt, "Telegram username: @xaskasdf")
+	require.Contains(t, prompt, "Telegram user ID: 101293943")
+	require.Contains(t, prompt, "Role/trust level: guest")
+	require.Contains(t, prompt, "Do not assume the interlocutor is Alan")
+	require.Contains(t, prompt, "Guest safety: this is not Alan/ProDrifterDK")
+}

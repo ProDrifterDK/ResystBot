@@ -58,14 +58,15 @@ var initializeLearningRuntime = learning.InitializeRuntime
 
 // processOptions configures how a message is processed
 type processOptions struct {
-	SessionKey      string // Session identifier for history/context
-	Channel         string // Target channel for tool execution
-	ChatID          string // Target chat ID for tool execution
-	UserMessage     string // User message content (may include prefix)
-	DefaultResponse string // Response when LLM returns empty
-	EnableSummary   bool   // Whether to trigger summarization
-	SendResponse    bool   // Whether to send response via bus
-	NoHistory       bool   // If true, don't load session history (for heartbeat)
+	SessionKey      string       // Session identifier for history/context
+	Channel         string       // Target channel for tool execution
+	ChatID          string       // Target chat ID for tool execution
+	UserMessage     string       // User message content (may include prefix)
+	DefaultResponse string       // Response when LLM returns empty
+	EnableSummary   bool         // Whether to trigger summarization
+	SendResponse    bool         // Whether to send response via bus
+	NoHistory       bool         // If true, don't load session history (for heartbeat)
+	UserIdentity    UserIdentity // Optional current interlocutor metadata
 }
 
 func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers.LLMProvider) *AgentLoop {
@@ -546,12 +547,38 @@ func (al *AgentLoop) ProcessDirectWithChannel(
 	ctx context.Context,
 	content, sessionKey, channel, chatID string,
 ) (string, error) {
+	return al.ProcessDirectWithChannelIdentity(ctx, content, sessionKey, channel, chatID, UserIdentity{})
+}
+
+func (al *AgentLoop) ProcessDirectWithChannelIdentity(
+	ctx context.Context,
+	content, sessionKey, channel, chatID string,
+	identity UserIdentity,
+) (string, error) {
+	senderID := firstNonEmpty(identity.SenderID, identity.Username, identity.UserID, "cron")
+	metadata := map[string]string{}
+	if identity.DisplayName != "" {
+		metadata["user"] = identity.DisplayName
+	}
+	if identity.Username != "" {
+		metadata["username"] = strings.TrimPrefix(identity.Username, "@")
+	}
+	if identity.UserID != "" {
+		metadata["user_id"] = identity.UserID
+	}
+	if identity.Role != "" {
+		metadata["role"] = identity.Role
+	}
+	if identity.IsGuest {
+		metadata["is_guest"] = "true"
+	}
 	msg := bus.InboundMessage{
 		Channel:    channel,
-		SenderID:   "cron",
+		SenderID:   senderID,
 		ChatID:     chatID,
 		Content:    content,
 		SessionKey: sessionKey,
+		Metadata:   metadata,
 	}
 
 	return al.processMessage(ctx, msg)
@@ -631,6 +658,39 @@ func (al *AgentLoop) PublishStatusUpdate(ctx context.Context, content, channel, 
 	})
 }
 
+func userIdentityFromInbound(msg bus.InboundMessage) UserIdentity {
+	metadata := msg.Metadata
+	identity := UserIdentity{
+		SenderID:    msg.SenderID,
+		UserID:      metadata["user_id"],
+		Username:    strings.TrimPrefix(metadata["username"], "@"),
+		DisplayName: metadata["user"],
+		Role:        metadata["role"],
+		IsGuest:     strings.EqualFold(metadata["is_guest"], "true") || strings.EqualFold(metadata["role"], "guest"),
+	}
+	if identity.DisplayName == "" {
+		identity.DisplayName = strings.TrimSpace(strings.TrimSpace(metadata["first_name"] + " " + metadata["last_name"]))
+	}
+	if identity.Username == "" && strings.Contains(msg.SenderID, "|") {
+		parts := strings.SplitN(msg.SenderID, "|", 2)
+		identity.UserID = firstNonEmpty(identity.UserID, parts[0])
+		identity.Username = parts[1]
+	}
+	if identity.UserID == "" && strings.Contains(msg.SenderID, "|") {
+		identity.UserID = strings.SplitN(msg.SenderID, "|", 2)[0]
+	}
+	return identity
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
 func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage) (string, error) {
 	// Add message preview to log (show full content for error messages)
 	var logContent string
@@ -700,6 +760,7 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		DefaultResponse: "SILENT",
 		EnableSummary:   true,
 		SendResponse:    false,
+		UserIdentity:    userIdentityFromInbound(msg),
 	})
 }
 
@@ -755,6 +816,7 @@ func (al *AgentLoop) processSystemMessage(ctx context.Context, msg bus.InboundMe
 		Channel:         originChannel,
 		ChatID:          originChatID,
 		UserMessage:     fmt.Sprintf("[System: %s] %s", msg.SenderID, msg.Content),
+		UserIdentity:    userIdentityFromInbound(msg),
 		DefaultResponse: "Background task completed.",
 		EnableSummary:   true,
 		SendResponse:    sendResponse,
@@ -849,13 +911,14 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, agent *AgentInstance, opt
 		SessionKey:  opts.SessionKey,
 	})
 	assembleResp, err := al.ContextManager().Assemble(withLegacyContextAgent(ctx, agent), &AssembleRequest{
-		SessionKey:  opts.SessionKey,
-		History:     history,
-		Summary:     summary,
-		UserMessage: userMsg,
-		Media:       nil,
-		Channel:     opts.Channel,
-		ChatID:      opts.ChatID,
+		SessionKey:   opts.SessionKey,
+		History:      history,
+		Summary:      summary,
+		UserMessage:  userMsg,
+		Media:        nil,
+		Channel:      opts.Channel,
+		ChatID:       opts.ChatID,
+		UserIdentity: opts.UserIdentity,
 	})
 	if err != nil {
 		runErr = err
@@ -1170,7 +1233,7 @@ func (al *AgentLoop) runLLMIteration(
 				newSummary := agent.Sessions.GetSummary(opts.SessionKey)
 				messages = agent.ContextBuilder.BuildMessages(
 					ctx, newHistory, newSummary, "",
-					nil, opts.Channel, opts.ChatID,
+					nil, opts.Channel, opts.ChatID, opts.UserIdentity,
 				)
 				messages = sanitizeMessageHistory(messages)
 				continue
@@ -1193,7 +1256,7 @@ func (al *AgentLoop) runLLMIteration(
 				newSummary := agent.Sessions.GetSummary(opts.SessionKey)
 				messages = agent.ContextBuilder.BuildMessages(
 					ctx, newHistory, newSummary, "",
-					nil, opts.Channel, opts.ChatID,
+					nil, opts.Channel, opts.ChatID, opts.UserIdentity,
 				)
 				messages = sanitizeMessageHistory(messages)
 				continue

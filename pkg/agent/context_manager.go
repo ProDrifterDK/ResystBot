@@ -9,15 +9,27 @@ import (
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
+// UserIdentity describes the human or external actor for the current turn.
+// It is optional; zero values preserve legacy CLI/cron behavior.
+type UserIdentity struct {
+	SenderID    string
+	UserID      string
+	Username    string
+	DisplayName string
+	Role        string
+	IsGuest     bool
+}
+
 // AssembleRequest is the input to Assemble — everything needed to build the message list.
 type AssembleRequest struct {
-	SessionKey  string
-	History     []providers.Message
-	Summary     string
-	UserMessage string
-	Media       []string
-	Channel     string
-	ChatID      string
+	SessionKey   string
+	History      []providers.Message
+	Summary      string
+	UserMessage  string
+	Media        []string
+	Channel      string
+	ChatID       string
+	UserIdentity UserIdentity
 }
 
 // AssembleResponse is the output — the assembled messages ready for the LLM.

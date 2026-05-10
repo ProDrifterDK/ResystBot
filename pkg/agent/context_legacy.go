@@ -45,6 +45,7 @@ func (l *legacyContextManager) Assemble(ctx context.Context, req *AssembleReques
 		req.Media,
 		req.Channel,
 		req.ChatID,
+		req.UserIdentity,
 	)
 	return &AssembleResponse{Messages: messages}, nil
 }

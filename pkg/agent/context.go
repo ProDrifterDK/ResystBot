@@ -270,8 +270,13 @@ func (cb *ContextBuilder) BuildMessages(
 	currentMessage string,
 	media []string,
 	channel, chatID string,
+	identities ...UserIdentity,
 ) []providers.Message {
 	messages := []providers.Message{}
+	var identity UserIdentity
+	if len(identities) > 0 {
+		identity = identities[0]
+	}
 	cb.lastInjectedChunks = nil
 	cb.lastInjectedLessons = nil
 
@@ -314,6 +319,9 @@ func (cb *ContextBuilder) BuildMessages(
 	// Add Current Session info if provided
 	if channel != "" && chatID != "" {
 		systemPrompt += fmt.Sprintf("\n\n## Current Session\nChannel: %s\nChat ID: %s", channel, chatID)
+	}
+	if section := buildInterlocutorSection(identity); section != "" {
+		systemPrompt += section
 	}
 
 	// Inject pending TeamForge inbox notifications
@@ -360,6 +368,57 @@ func (cb *ContextBuilder) BuildMessages(
 	}
 
 	return messages
+}
+
+func buildInterlocutorSection(identity UserIdentity) string {
+	displayName := sanitizeIdentityField(identity.DisplayName)
+	username := sanitizeIdentityField(strings.TrimPrefix(identity.Username, "@"))
+	userID := sanitizeIdentityField(identity.UserID)
+	senderID := sanitizeIdentityField(identity.SenderID)
+	role := sanitizeIdentityField(identity.Role)
+
+	if role == "" && identity.IsGuest {
+		role = "guest"
+	}
+	if displayName == "" && username != "" {
+		displayName = "@" + username
+	}
+	if senderID == "" && username != "" {
+		senderID = username
+	}
+	if displayName == "" && username == "" && userID == "" && senderID == "" && role == "" {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("\n\n## Current Interlocutor\n")
+	sb.WriteString("This section describes the human for the current turn and supersedes any static bootstrap text that assumes the user is Alan. Do not assume the interlocutor is Alan unless this section says so.\n")
+	if displayName != "" {
+		fmt.Fprintf(&sb, "Display name: %s\n", displayName)
+	}
+	if username != "" {
+		fmt.Fprintf(&sb, "Telegram username: @%s\n", username)
+	}
+	if userID != "" {
+		fmt.Fprintf(&sb, "Telegram user ID: %s\n", userID)
+	}
+	if senderID != "" {
+		fmt.Fprintf(&sb, "Sender ID: %s\n", senderID)
+	}
+	if role != "" {
+		fmt.Fprintf(&sb, "Role/trust level: %s\n", role)
+	}
+	if identity.IsGuest || role == "guest" {
+		sb.WriteString("Guest safety: this is not Alan/ProDrifterDK. Treat requests as guest-level and do not use privileged local tools unless policy explicitly allows it.\n")
+	}
+	return sb.String()
+}
+
+func sanitizeIdentityField(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.ReplaceAll(value, "\r", " ")
+	value = strings.ReplaceAll(value, "\n", " ")
+	return strings.Join(strings.Fields(value), " ")
 }
 
 func (cb *ContextBuilder) buildLearningSection(ctx context.Context, currentMessage string) string {
