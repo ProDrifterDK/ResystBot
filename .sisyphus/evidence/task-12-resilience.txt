@@ -1,0 +1,20 @@
+Task 12 resilience evidence
+Date: 2026-05-03
+
+Added test:
+- pkg/agent/learning_e2e_test.go :: TestAgentLoop_LearningRuntimeUnavailableDoesNotBreakChat
+
+Covered path:
+1. initializeLearningRuntime was forced to fail with an embedding/Qdrant unavailable error.
+2. AgentLoop still returned a successful chat response.
+3. A trace record was still written to workspace/mind/traces.
+4. No learning retriever/outcome extractor was attached, no "## Past Learnings" section appeared in the prompt, and trace.injected_learning_ids stayed empty.
+
+Verification commands:
+- go test ./pkg/agent -run 'TestAgentLoop_Learning' -count=1
+- go test ./pkg/trace ./pkg/learning ./pkg/agent ./pkg/hooks ./cmd/picoclaw
+- go test -race ./pkg/trace ./pkg/learning ./pkg/agent ./cmd/picoclaw
+- go test ./...
+
+Observed result:
+- All commands passed.

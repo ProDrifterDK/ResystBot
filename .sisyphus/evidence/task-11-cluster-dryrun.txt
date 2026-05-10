@@ -1,0 +1,20 @@
+Task 11 cluster dry-run evidence
+Date: 2026-05-03
+
+- Added `pkg/learning/cluster.go` with disabled-by-default dry-run primitives only:
+  - `ClusterScanOptions`
+  - `ClusterDryRunResult`
+  - `LessonCluster`
+  - `DryRunLessonClusters(...)`
+- Grouping is deterministic and in-memory only: same source + shared topic/tag signals + bounded time window.
+- No scheduler, no writes, no new lessons, no Qdrant/embedding dependency, no AgentLoop wiring.
+- Test coverage:
+  - `TestDryRunLessonClustersGroupsRelatedLessons`
+  - `TestDryRunLessonClustersDisabledByDefault`
+- Verification command passed:
+  - `go test ./pkg/learning -run 'Test.*Cluster|Test.*Pattern'`
+
+Observed result:
+- 5 fake lessons supplied.
+- 3 related docker/networking lessons inside the 7-day window grouped into 1 cluster.
+- 2 non-matching lessons were excluded by topic/time-window filtering.

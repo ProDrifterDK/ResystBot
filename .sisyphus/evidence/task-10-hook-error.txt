@@ -1,0 +1,8 @@
+Task 10 — PostToolUse error payload
+
+- PostToolUse hooks now receive first-class error metadata without changing tool_response semantics.
+- Retry fix: removed `omitempty` from both boolean JSON tags so error payloads serialize both `"tool_success":false` and `"tool_is_error":true` explicitly.
+- Error-path payload sets tool_success=false and tool_is_error=true, derived from ToolResult.IsError.
+- Existing hook behavior remains unchanged for PreToolUse, SessionStart, PreCompact, and UserPromptSubmit; zero-value booleans preserve compatibility.
+- Failure-safe behavior still holds for empty/null hook output and hook command failures.
+- Focused verification passed: go test ./pkg/hooks ./pkg/tools -run 'Test.*PostToolUse|Test.*Hook'

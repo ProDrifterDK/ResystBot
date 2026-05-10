@@ -1,0 +1,12 @@
+Task 11 disabled gate evidence
+Date: 2026-05-03
+
+- Added additive config gate: `LearningConfig.CrossSessionClustering` (`cross_session_clustering_enabled`).
+- Default remains disabled via `DefaultLearningConfig()`.
+- Absent `learning` config keeps the gate disabled.
+- Round-trip config test proves explicit enablement persists when configured.
+- Clustering helper returns disabled result when config is nil or gate is false.
+
+Verification commands passed:
+- `go test ./pkg/config -run 'TestDefaultConfig_LearningDefaults|TestLoadConfig_LearningDefaultsWhenAbsent|TestLoadConfig_LearningRoundTrip|TestConfigMarshalJSON_OmitsDefaultDisabledLearning'`
+- `go test ./pkg/learning -run 'Test.*Cluster|Test.*Pattern'`

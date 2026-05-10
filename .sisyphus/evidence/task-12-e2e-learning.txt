@@ -1,0 +1,20 @@
+Task 12 E2E learning evidence
+Date: 2026-05-03
+
+Added test:
+- pkg/agent/learning_e2e_test.go :: TestAgentLoop_LearningEndToEnd_PersistsRetrievesAndUpdatesDuplicate
+
+Covered path:
+1. Fake runtime bootstrap wired real learning.Encoder + learning.LearningRetriever + learning.OutcomeExtractor into AgentLoop via initializeLearningRuntime override.
+2. First failed-tool turn persisted exactly one lesson through Encoder.Store after trace finalization; stored lesson payload trace_id matched the first emitted trace record ID.
+3. Second similar prompt retrieved that persisted lesson, injected a "## Past Learnings" section into the system prompt, and emitted the stable lesson ID in trace.injected_learning_ids.
+4. Third repeated failure hit the duplicate search/update path: total upserts stayed at 1 while payload updates increased and reused the same lesson ID.
+
+Verification commands:
+- go test ./pkg/agent -run 'TestAgentLoop_Learning' -count=1
+- go test ./pkg/trace ./pkg/learning ./pkg/agent ./pkg/hooks ./cmd/picoclaw
+- go test -race ./pkg/trace ./pkg/learning ./pkg/agent ./cmd/picoclaw
+- go test ./...
+
+Observed result:
+- All commands passed.

@@ -1,0 +1,4 @@
+Regression verification:
+- Command: go test ./cmd/picoclaw -count=1
+- Result: ok (github.com/sipeed/picoclaw/cmd/picoclaw)
+- Unknown-type parsing coverage preserved; daemon package tests still pass after adding ping handling.

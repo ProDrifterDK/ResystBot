@@ -1,0 +1,8 @@
+Task 10 — PostToolUse success payload
+
+- Added HookInput fields: tool_success, tool_is_error.
+- RunPostToolUse now accepts explicit success/error booleans and forwards them in PostToolUse JSON only.
+- Retry fix: removed `omitempty` from both boolean JSON tags so success payloads serialize both `"tool_success":true` and `"tool_is_error":false` explicitly.
+- ToolRegistry.ExecuteWithContext passes !result.IsError and result.IsError after tool execution.
+- Verified success-path payload in pkg/hooks/hooks_test.go and pkg/tools/registry_test.go.
+- Focused verification passed: go test ./pkg/hooks ./pkg/tools -run 'Test.*PostToolUse|Test.*Hook'

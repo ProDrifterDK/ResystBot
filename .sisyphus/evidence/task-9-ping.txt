@@ -1,0 +1,4 @@
+Focused ping verification:
+- Command: go test ./cmd/picoclaw -run TestDaemonPing -count=1
+- Result: ok (github.com/sipeed/picoclaw/cmd/picoclaw)
+- Pong output asserted exactly as {"type":"pong","text":"ok"}\n with empty chat_id/file_path omitted.
