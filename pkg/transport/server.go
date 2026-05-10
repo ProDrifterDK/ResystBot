@@ -44,11 +44,12 @@ type Event struct {
 }
 
 type messageInput struct {
-	ChatID   string `json:"chat_id"`
-	User     string `json:"user"`
-	Username string `json:"username"`
-	Text     string `json:"text"`
-	StreamID string `json:"stream_id"`
+	ChatID     string `json:"chat_id"`
+	User       string `json:"user"`
+	Username   string `json:"username"`
+	Text       string `json:"text"`
+	StreamID   string `json:"stream_id"`
+	ReceivedAt string `json:"received_at,omitempty"`
 }
 
 type cancelInput struct {
@@ -314,8 +315,9 @@ func (s *Server) processMessage(stream *Stream, input messageInput) {
 		Content:    input.Text,
 		SessionKey: s.channel + ":" + input.ChatID,
 		Metadata: map[string]string{
-			"user":     input.User,
-			"username": input.Username,
+			"user":        input.User,
+			"username":    input.Username,
+			"received_at": input.ReceivedAt,
 		},
 	}
 
