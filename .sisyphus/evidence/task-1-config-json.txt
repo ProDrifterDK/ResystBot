@@ -1,0 +1,11 @@
+Task 1 - learning config focused verification
+
+- Command: go test ./pkg/config -run Learning
+- Result: PASS
+- Summary: focused learning config tests passed in 0.003s, covering absent learning section defaults, JSON omission/round-trip behavior, and distinct learning vs memory collection names.
+
+Retry fix - learning JSON guardrails
+
+- Command: go test ./pkg/config -run Learning
+- Result: PASS
+- Summary: focused learning config tests passed in 0.004s with size-cap round-trip coverage, default cap assertions, default-disabled JSON omission, and absent-section fallback behavior intact.

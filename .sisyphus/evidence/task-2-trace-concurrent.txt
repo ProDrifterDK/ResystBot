@@ -1,0 +1,14 @@
+Task: pkg/trace concurrent JSONL writer
+Date: 2026-05-02
+
+Retry fix applied: explicit exit-reason support added in collector API without weakening writer concurrency coverage.
+
+Verification:
+- Command: go test -race ./pkg/trace -run TestTraceWriterConcurrent
+- Result: PASS
+
+Observed coverage from test:
+- Concurrent goroutines append through one TraceWriter guarded by a mutex.
+- Output path is date-partitioned JSONL: 2026/2026-05/2026-05-02.jsonl.
+- Each line unmarshals as valid TurnTrace JSON with unique trace IDs.
+- Line count matches write count, demonstrating no interleaved/corrupted JSONL records.

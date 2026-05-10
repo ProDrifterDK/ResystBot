@@ -1,0 +1,16 @@
+Task: pkg/trace finalize-once collector
+Date: 2026-05-02
+
+Retry fix applied: collector now exposes explicit finalize-with-exit-reason support for `llm_error` and `tool_error` while preserving default/context/generic finalize behavior.
+
+Verification:
+- Command: go test ./pkg/trace
+- Result: PASS
+
+Observed coverage from tests:
+- TurnTraceCollector.Finalize applies final response metadata only once.
+- Second finalize call is ignored, preserving the first response, exit reason, and iteration state.
+- `FinalizeWithExitReason(...)` preserves explicit `llm_error` and `tool_error` on first finalize.
+- Explicit finalize still yields `default_response` and `context_cancelled` when those conditions apply.
+- Collector records tool calls, LLM calls, and fallback attempts while maintaining aggregate counters.
+- Exit reason inference covers success, default response, context cancellation, deadline, and generic errors.

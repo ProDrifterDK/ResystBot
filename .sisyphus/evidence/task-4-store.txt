@@ -1,0 +1,13 @@
+Task 4 store evidence
+Date: 2026-05-02
+
+Command:
+go test ./pkg/learning -run TestEncoderStoresNewLesson -count=1
+
+Result:
+ok  github.com/sipeed/picoclaw/pkg/learning  0.003s
+
+Summary:
+- New lesson path performed exactly one Qdrant upsert.
+- Stored payload used source_type=learning and serialized LessonRecord JSON in memory.QdrantPayload.Text.
+- Stored lesson ID was hydrated before persistence and matched the Qdrant point ID.

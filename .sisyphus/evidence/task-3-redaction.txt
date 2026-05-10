@@ -1,0 +1,21 @@
+Task 3 redaction evidence
+Date: 2026-05-02
+
+Commands:
+- go test ./pkg/trace -run 'TestRedact|TestTruncate'
+- go test ./pkg/trace ./pkg/learning
+
+Results:
+- Focused trace redaction/truncation tests: PASS
+- Trace and learning package tests: PASS
+- LSP diagnostics: pkg/trace clean, pkg/learning clean
+
+Checks:
+- Redaction covers bearer tokens, env-style API keys, JSON password fields, private-key blocks, credential-like paths/URLs.
+- Lesson sanitization now covers Situation, Approach, Outcome, ErrorMessage, Correction, BetterApproach.
+- Grep found no TODO/FIXME/HACK or debug prints in changed pkg/trace/pkg/learning files.
+- Grep found raw secret literals only in intentional test fixtures/assertions under pkg/trace/*_test.go and pkg/learning/encoder_test.go.
+
+GitNexus notes:
+- Direct impact lookup for target symbols in new/untracked pkg/trace/pkg/learning files returned unresolved targets.
+- gitnexus_detect_changes(scope=all) reported CRITICAL because the worktree already contains broad pre-existing tracked changes outside this task; that report is not isolated to Task 3.

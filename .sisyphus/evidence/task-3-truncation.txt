@@ -1,0 +1,20 @@
+Task 3 truncation evidence
+Date: 2026-05-02
+
+Commands:
+- go test ./pkg/trace -run 'TestRedact|TestTruncate'
+- go test ./pkg/trace ./pkg/learning
+
+Results:
+- Oversized tool output truncation test: PASS
+- Package regression tests: PASS
+
+Deterministic cap behavior:
+- Trace writer sanitizes before persistence, then truncates with marker `...[TRUNCATED]`.
+- User message, final response, tool args string values, tool result, fallback error text, and lesson text fields are capped through config.LearningConfig getter fallbacks.
+- Zero-value configs remain bounded because writer/encoder use getter-based caps rather than raw struct fields.
+
+Verification summary:
+- Stored tool result length is capped to configured max in tests.
+- Truncated output retains deterministic marker.
+- Lesson Outcome/Approach sanitization and cap enforcement verified through pkg/learning tests.

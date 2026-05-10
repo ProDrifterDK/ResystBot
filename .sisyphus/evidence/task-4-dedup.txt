@@ -1,0 +1,13 @@
+Task 4 dedup evidence
+Date: 2026-05-02
+
+Command:
+go test ./pkg/learning -run TestEncoderDedupUsesUpdatePayload -count=1
+
+Result:
+ok  github.com/sipeed/picoclaw/pkg/learning  0.003s
+
+Summary:
+- Duplicate lesson path performed no Qdrant upsert.
+- Encoder called UpdatePayload on the matched point ID.
+- Updated fields were access_count=existing+1 and last_accessed=<RFC3339 timestamp>.
