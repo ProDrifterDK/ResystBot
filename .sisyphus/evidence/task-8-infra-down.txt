@@ -1,0 +1,5 @@
+Task 8 — learning infra unavailable startup
+
+- Command: `go test ./pkg/agent -run 'TestNewAgentLoop_LearningInfraDownFailsOpen' -count=1`
+- Result: PASS
+- Verified: when learning bootstrap returns a Qdrant-unavailable style error, `NewAgentLoop()` still returns a non-nil loop, leaves the learning retriever unset, and keeps `outcomeExtractor` nil so normal chat can continue fail-open.

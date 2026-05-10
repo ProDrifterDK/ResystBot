@@ -1,0 +1,6 @@
+Task 5 trace failure evidence
+
+- Command: `go test ./pkg/agent -run 'Test.*Trace|Test.*AgentLoop' -count=1`
+- Result: PASS (`ok github.com/sipeed/picoclaw/pkg/agent 2.032s`)
+- Scenario covered: `TestAgentLoop_TraceWriteFailureNonFatal`
+- Verified behavior: forcing `TraceWriter` to target a file-backed base path makes the write fail internally, but `ProcessDirectWithChannel(...)` still returns the normal assistant response and no trace record is persisted.

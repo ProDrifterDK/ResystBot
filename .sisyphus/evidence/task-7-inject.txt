@@ -1,0 +1,9 @@
+Task 7 evidence — learning injection success
+
+- Modified `pkg/agent/context.go` to add `learningRetriever`, `learningConfig`, `lastInjectedLessons`, `SetLearningRetriever(...)`, and `GetInjectedLessons()`.
+- `BuildMessages()` now clears stale lesson state, retrieves lessons once per call, formats them under `## Past Learnings (use these to avoid repeating mistakes)`, and injects the section before long-term memory content.
+- Retrieval uses `LearningConfig.GetMaxRetrievedLessons()` and remains non-fatal.
+- Verification: `go test ./pkg/agent -run 'TestContextBuilder.*Learning|Test.*InjectedLessons' -count=1` -> ok `github.com/sipeed/picoclaw/pkg/agent`.
+- Coverage locked by tests for successful injection, ordering before `# Memory`, getter-based topK=3 default, copy-on-read behavior for `GetInjectedLessons()`, and stale lesson clearing.
+- Trace seam closed in `pkg/agent/loop.go`: after `BuildMessages()`, injected lesson IDs from `agent.ContextBuilder.GetInjectedLessons()` are copied into the active trace collector via `SetInjectedLearningIDs(...)`, skipping empty IDs.
+- Trace verification: `go test ./pkg/agent -run 'TestContextBuilder.*Learning|Test.*InjectedLessons|TestAgentLoop.*Learning' -count=1` should confirm a persisted trace JSONL record includes `InjectedLearningIDs: ["lesson_trace_123"]` when the fake learning retriever injects a lesson.

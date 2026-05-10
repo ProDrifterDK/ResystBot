@@ -1,0 +1,15 @@
+Task 6 — infra ignore evidence
+
+- Implemented infra filtering in `pkg/learning/extractor.go` for:
+  - rate limits / 429
+  - auth failures / invalid API key
+  - network outages / connection refused / timeouts
+  - Qdrant unavailable
+  - sandbox-denied exec / safety guard blocks
+  - daemon shutdown cancellation
+  - context cancelled / deadline exceeded exit reasons
+- Verified with `TestInfraFailuresAreIgnored`; each synthetic infra case returned no lesson and performed no store writes.
+- Focused outcome tests and race tests passed with:
+  `go test ./pkg/learning -run 'TestOutcome|TestCorrection|TestInfra' && go test -race ./pkg/learning`
+
+Result: PASS

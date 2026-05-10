@@ -1,0 +1,5 @@
+Task 8 — learning disabled startup
+
+- Command: `go test ./pkg/agent -run 'TestNewAgentLoop_LearningDisabledSkipsBootstrap' -count=1`
+- Result: PASS
+- Verified: `Learning.Enabled=false` keeps `NewAgentLoop()` quiet, does not call learning bootstrap, does not attach a learning retriever, and leaves `outcomeExtractor` nil.

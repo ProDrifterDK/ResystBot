@@ -1,0 +1,6 @@
+Task 7 evidence — retrieval failure stays silent
+
+- Added focused `pkg/agent` test coverage for a failing learning retriever.
+- Expected behavior verified: `BuildMessages()` still succeeds, no `## Past Learnings (use these to avoid repeating mistakes)` section is injected, and `GetInjectedLessons()` remains empty.
+- Prompt comparison is normalized only for the dynamic current-time line; otherwise the failure-path system prompt matches the baseline prompt without learning injection.
+- Verification: `go test ./pkg/agent -run 'TestContextBuilder.*Learning|Test.*InjectedLessons' -count=1` -> ok `github.com/sipeed/picoclaw/pkg/agent`.

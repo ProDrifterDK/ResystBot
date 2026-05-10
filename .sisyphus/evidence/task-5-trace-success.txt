@@ -1,0 +1,6 @@
+Task 5 trace success evidence
+
+- Command: `go test ./pkg/agent -run 'Test.*Trace|Test.*AgentLoop' -count=1`
+- Result: PASS (`ok github.com/sipeed/picoclaw/pkg/agent 2.032s`)
+- Scenario covered: `TestAgentLoop_TraceSuccess`
+- Verified behavior: one JSONL trace record written under `{workspace}/mind/traces/...`, detached write still succeeds after the request context is canceled, record includes runtime session key, agent id, user message, final response, LLM metadata, and tool trace.

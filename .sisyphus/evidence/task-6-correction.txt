@@ -1,0 +1,11 @@
+Task 6 — correction linkage evidence
+
+- Implemented `pkg/learning/extractor.go` with mutex-protected `lastTraceBySession`, TTL pruning via `LearningConfig.GetCorrectionSessionTTL()`, and append-only correction extraction.
+- Verified linked correction behavior with `TestCorrectionCreatesLinkedAppendOnlyLesson`:
+  - first trace stored a tool-error lesson for `trace-original`
+  - next turn `"actually, use pip install --break-system-packages numpy instead on Pop!_OS"` created a new `user_correction` lesson
+  - correction lesson linked to previous `TraceID=trace-original` and kept the earlier lesson intact
+- TTL negative case covered by `TestCorrectionAfterTTLDoesNotLink`: expired prior trace produced no linked lesson and no panic.
+- Verification command: `go test ./pkg/learning -run 'TestOutcome|TestCorrection|TestInfra' && go test -race ./pkg/learning`
+
+Result: PASS
