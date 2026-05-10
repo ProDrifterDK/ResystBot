@@ -3,8 +3,47 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"os"
 	"testing"
 )
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe error: %v", err)
+	}
+	os.Stdout = w
+
+	defer func() {
+		os.Stdout = old
+		_ = r.Close()
+	}()
+
+	fn()
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("close writer error: %v", err)
+	}
+
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read stdout error: %v", err)
+	}
+	return string(out)
+}
+
+func TestDaemonPing(t *testing.T) {
+	out := captureStdout(t, func() {
+		emitEvent("pong", "", "ok")
+	})
+	if out != "{\"type\":\"pong\",\"text\":\"ok\"}\n" {
+		t.Fatalf("pong output mismatch: got %q", out)
+	}
+}
 
 func TestMarshalDaemonEvent(t *testing.T) {
 	e := daemonEvent{
@@ -100,6 +139,28 @@ func TestParseDaemonInput_Shutdown(t *testing.T) {
 	}
 	if in.Type != "shutdown" {
 		t.Errorf("Type: want %q, got %q", "shutdown", in.Type)
+	}
+}
+
+func TestParseDaemonInput_Ping(t *testing.T) {
+	raw := `{"type":"ping"}`
+	var in daemonInput
+	if err := json.Unmarshal([]byte(raw), &in); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+	if in.Type != "ping" {
+		t.Errorf("Type: want %q, got %q", "ping", in.Type)
+	}
+}
+
+func TestParseDaemonInput_UnknownType(t *testing.T) {
+	raw := `{"type":"unknown"}`
+	var in daemonInput
+	if err := json.Unmarshal([]byte(raw), &in); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+	if in.Type != "unknown" {
+		t.Errorf("Type: want %q, got %q", "unknown", in.Type)
 	}
 }
 

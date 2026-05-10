@@ -19,7 +19,7 @@ import (
 
 // daemonInput is a JSON-line message received from tg_listener on stdin.
 type daemonInput struct {
-	Type     string `json:"type"` // "message", "cancel", "shutdown"
+	Type     string `json:"type"` // "message", "cancel", "shutdown", "ping"
 	ChatID   string `json:"chat_id,omitempty"`
 	User     string `json:"user,omitempty"`
 	Username string `json:"username,omitempty"`
@@ -293,6 +293,9 @@ func daemonMode(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.Mess
 		}
 
 		switch input.Type {
+		case "ping":
+			emitEvent("pong", "", "ok")
+
 		case "message":
 			// Implicit-cancel: if there is an in-flight request for this
 			// chat, cancel it before starting a new one.
