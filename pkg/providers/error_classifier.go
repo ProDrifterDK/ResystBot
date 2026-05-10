@@ -110,6 +110,7 @@ var (
 		rxp(`max[_ ]tokens.*exceed`),
 		rxp(`context[_ ]window.*exceed`),
 		rxp(`too many tokens`),
+		rxp(`prompt.*exceed.*max.*length`),
 		rxp(`prompt is too long`),
 		rxp(`requested[_ ]max[_ ]context`),
 		rxp(`exceeds.*maximum.*context`),
@@ -186,7 +187,19 @@ func ClassifyError(err error, provider, model string) *FailoverError {
 		}
 	}
 
-	// Try HTTP status code extraction first.
+	// Provider APIs often report context overflow as HTTP 400. Classify the
+	// message first so fallback/compression can recover instead of treating it
+	// as a non-retriable request-format error.
+	if matchesAny(msg, contextOverflowPatterns) {
+		return &FailoverError{
+			Reason:   FailoverContextOverflow,
+			Provider: provider,
+			Model:    model,
+			Wrapped:  err,
+		}
+	}
+
+	// Try HTTP status code extraction after high-signal message checks.
 	if status := extractHTTPStatus(msg); status > 0 {
 		if reason := classifyByStatus(status); reason != "" {
 			return &FailoverError{
@@ -251,9 +264,6 @@ func classifyByMessage(msg string) FailoverReason {
 	}
 	if matchesAny(msg, authPatterns) {
 		return FailoverAuth
-	}
-	if matchesAny(msg, contextOverflowPatterns) {
-		return FailoverContextOverflow
 	}
 	if matchesAny(msg, formatPatterns) {
 		return FailoverFormat

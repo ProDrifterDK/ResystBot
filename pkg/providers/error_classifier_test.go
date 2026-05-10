@@ -67,6 +67,23 @@ func TestClassifyError_StatusCodes(t *testing.T) {
 	}
 }
 
+func TestClassifyError_400PromptExceedsMaxLengthIsContextOverflow(t *testing.T) {
+	err := errors.New(`API request failed:
+  Status: 400
+  Body:   {"error":{"code":"1261","message":"Prompt exceeds max length"}}`)
+
+	result := ClassifyError(err, "openai/zai/glm-5.1", "glm-5.1")
+	if result == nil {
+		t.Fatal("expected non-nil for prompt length overflow")
+	}
+	if result.Reason != FailoverContextOverflow {
+		t.Errorf("reason = %q, want context_overflow", result.Reason)
+	}
+	if !result.IsRetriable() {
+		t.Error("prompt length overflow should be retriable")
+	}
+}
+
 func TestClassifyError_RateLimitPatterns(t *testing.T) {
 	patterns := []string{
 		"rate limit exceeded",
