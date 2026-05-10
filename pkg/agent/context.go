@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/picoclaw/pkg/learning"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/memory"
 	"github.com/sipeed/picoclaw/pkg/providers"
@@ -16,15 +18,23 @@ import (
 	"github.com/sipeed/picoclaw/pkg/tools"
 )
 
+type learningRetriever interface {
+	Search(ctx context.Context, query string, topK int) ([]learning.LessonRecord, error)
+}
+
 type ContextBuilder struct {
-	workspace          string
-	skillsLoader       *skills.SkillsLoader
-	triggerEngine      *skills.TriggerEngine
-	lastTriggerContext skills.TriggerContext
-	memory             *MemoryStore
-	tools              *tools.ToolRegistry    // Direct reference to tool registry
-	retriever          memory.MemoryRetriever // nil = use fallback
-	lastInjectedChunks []memory.MemoryChunk
+	workspace           string
+	skillsLoader        *skills.SkillsLoader
+	triggerEngine       *skills.TriggerEngine
+	lastTriggerContext  skills.TriggerContext
+	memory              *MemoryStore
+	tools               *tools.ToolRegistry    // Direct reference to tool registry
+	retriever           memory.MemoryRetriever // nil = use fallback
+	lastInjectedChunks  []memory.MemoryChunk
+	learningRetriever   learningRetriever
+	learningConfig      *config.LearningConfig
+	lastInjectedLessons []learning.LessonRecord
+	lastReceivedAt      string // ISO timestamp of when the current message was received
 }
 
 func getGlobalConfigDir() string {
@@ -60,9 +70,25 @@ func (cb *ContextBuilder) SetRetriever(r memory.MemoryRetriever) {
 	cb.retriever = r
 }
 
+// SetLearningRetriever sets the lesson retriever and config for prompt injection.
+func (cb *ContextBuilder) SetLearningRetriever(lr learningRetriever, cfg *config.LearningConfig) {
+	cb.learningRetriever = lr
+	cb.learningConfig = cfg
+}
+
 // GetInjectedChunks returns the memory chunks injected in the last BuildMessages call.
 func (cb *ContextBuilder) GetInjectedChunks() []memory.MemoryChunk {
 	return cb.lastInjectedChunks
+}
+
+// GetInjectedLessons returns a copy of the lessons injected in the last BuildMessages call.
+func (cb *ContextBuilder) GetInjectedLessons() []learning.LessonRecord {
+	if len(cb.lastInjectedLessons) == 0 {
+		return nil
+	}
+	lessons := make([]learning.LessonRecord, len(cb.lastInjectedLessons))
+	copy(lessons, cb.lastInjectedLessons)
+	return lessons
 }
 
 // GetSkillsLoader returns the skills loader for tool registration.
@@ -80,6 +106,13 @@ func (cb *ContextBuilder) UpdateTriggerContext(msg skills.TriggerContext) {
 	cb.lastTriggerContext = msg
 }
 
+// SetReceivedAt sets the ISO timestamp of when the current message was received.
+// This is injected into the system prompt so the agent has natural time awareness
+// without needing to execute a shell command.
+func (cb *ContextBuilder) SetReceivedAt(iso string) {
+	cb.lastReceivedAt = iso
+}
+
 // RecordToolCall records a tool call for trigger matching.
 func (cb *ContextBuilder) RecordToolCall(toolName string, sessionKey string) {
 	if cb.triggerEngine != nil {
@@ -89,6 +122,11 @@ func (cb *ContextBuilder) RecordToolCall(toolName string, sessionKey string) {
 
 func (cb *ContextBuilder) getIdentity() string {
 	now := time.Now().Format("2006-01-02 15:04 (Monday)")
+
+	receivedSection := ""
+	if cb.lastReceivedAt != "" {
+		receivedSection = fmt.Sprintf("\n\n## Message Received At\n%s", cb.lastReceivedAt)
+	}
 	workspacePath, _ := filepath.Abs(filepath.Join(cb.workspace))
 	runtime := fmt.Sprintf("%s %s, Go %s", runtime.GOOS, runtime.GOARCH, runtime.Version())
 
@@ -100,7 +138,7 @@ func (cb *ContextBuilder) getIdentity() string {
 You are picoclaw, a helpful AI assistant.
 
 ## Current Time
-%s
+%s%s
 
 ## Runtime
 %s
@@ -120,7 +158,7 @@ Your workspace is at: %s
 2. **Be helpful and accurate** - When using tools, briefly explain what you're doing.
 
 3. **Memory** - When interacting with me if something seems memorable, update %s/memory/MEMORY.md`,
-		now, runtime, workspacePath, workspacePath, workspacePath, workspacePath, toolsSection, workspacePath)
+		now, receivedSection, runtime, workspacePath, workspacePath, workspacePath, workspacePath, toolsSection, workspacePath)
 }
 
 func (cb *ContextBuilder) buildToolsSection() string {
@@ -234,11 +272,17 @@ func (cb *ContextBuilder) BuildMessages(
 	channel, chatID string,
 ) []providers.Message {
 	messages := []providers.Message{}
+	cb.lastInjectedChunks = nil
+	cb.lastInjectedLessons = nil
+
+	lessonSection := cb.buildLearningSection(ctx, currentMessage)
 
 	systemPrompt := cb.BuildSystemPrompt()
+	if lessonSection != "" {
+		systemPrompt = injectPromptSectionBeforeMemory(systemPrompt, lessonSection)
+	}
 
 	// Auto-inject relevant memories if retriever is available
-	cb.lastInjectedChunks = nil
 	if cb.retriever != nil && strings.TrimSpace(currentMessage) != "" {
 		retrievalCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		chunks, err := cb.retriever.Search(retrievalCtx, currentMessage, 5)
@@ -316,6 +360,89 @@ func (cb *ContextBuilder) BuildMessages(
 	}
 
 	return messages
+}
+
+func (cb *ContextBuilder) buildLearningSection(ctx context.Context, currentMessage string) string {
+	if cb.learningRetriever == nil || cb.learningConfig == nil || !cb.learningConfig.Enabled {
+		return ""
+	}
+	query := strings.TrimSpace(currentMessage)
+	if query == "" {
+		return ""
+	}
+
+	retrievalCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	lessons, err := cb.learningRetriever.Search(retrievalCtx, query, cb.learningConfig.GetMaxRetrievedLessons())
+	cancel()
+	if err != nil {
+		logger.WarnCF("agent", "Learning auto-injection failed, continuing without lessons",
+			map[string]any{"error": err.Error()})
+		return ""
+	}
+	if len(lessons) == 0 {
+		return ""
+	}
+
+	cb.lastInjectedLessons = make([]learning.LessonRecord, len(lessons))
+	copy(cb.lastInjectedLessons, lessons)
+
+	var section strings.Builder
+	section.WriteString("## Past Learnings (use these to avoid repeating mistakes)\n\n")
+	for i, lesson := range lessons {
+		section.WriteString(fmt.Sprintf("%d. %s\n", i+1, formatLearningLesson(lesson)))
+		if lesson.ID != "" {
+			section.WriteString(fmt.Sprintf("   - Lesson ID: %s\n", lesson.ID))
+		}
+		if tags := strings.Join(lesson.Tags, ", "); tags != "" {
+			section.WriteString(fmt.Sprintf("   - Tags: %s\n", tags))
+		}
+		section.WriteString("\n")
+	}
+	return strings.TrimSpace(section.String())
+}
+
+func formatLearningLesson(lesson learning.LessonRecord) string {
+	parts := make([]string, 0, 5)
+	if situation := strings.TrimSpace(lesson.Situation); situation != "" {
+		parts = append(parts, "Situation: "+situation)
+	}
+	if errorMessage := strings.TrimSpace(lesson.ErrorMessage); errorMessage != "" {
+		parts = append(parts, "Mistake/Error: "+errorMessage)
+	}
+	if correction := strings.TrimSpace(lesson.Correction); correction != "" {
+		parts = append(parts, "Correction: "+correction)
+	}
+	if betterApproach := strings.TrimSpace(lesson.BetterApproach); betterApproach != "" {
+		parts = append(parts, "Better approach: "+betterApproach)
+	} else if approach := strings.TrimSpace(lesson.Approach); approach != "" {
+		parts = append(parts, "Approach: "+approach)
+	}
+	if outcome := strings.TrimSpace(lesson.Outcome); outcome != "" {
+		parts = append(parts, "Outcome: "+outcome)
+	}
+	if len(parts) == 0 {
+		if lesson.ID != "" {
+			return "Lesson " + lesson.ID
+		}
+		return "Retrieved lesson"
+	}
+	return strings.Join(parts, " | ")
+}
+
+func injectPromptSectionBeforeMemory(systemPrompt, section string) string {
+	section = strings.TrimSpace(section)
+	if section == "" {
+		return systemPrompt
+	}
+	const separator = "\n\n---\n\n"
+	memoryMarker := separator + "# Memory\n\n"
+	if idx := strings.Index(systemPrompt, memoryMarker); idx >= 0 {
+		return systemPrompt[:idx] + separator + section + systemPrompt[idx:]
+	}
+	if systemPrompt == "" {
+		return section
+	}
+	return systemPrompt + separator + section
 }
 
 func sanitizeHistoryForProvider(history []providers.Message) []providers.Message {
