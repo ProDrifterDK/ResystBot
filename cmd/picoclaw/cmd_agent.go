@@ -54,6 +54,11 @@ func agentCmd() {
 	modelOverride := ""
 	channel := "cli"
 	chatID := "direct"
+	senderID := ""
+	userID := ""
+	username := ""
+	userDisplayName := ""
+	userRole := ""
 	daemon := false
 
 	args := os.Args[2:]
@@ -85,6 +90,31 @@ func agentCmd() {
 		case "--chat-id":
 			if i+1 < len(args) {
 				chatID = args[i+1]
+				i++
+			}
+		case "--sender-id":
+			if i+1 < len(args) {
+				senderID = args[i+1]
+				i++
+			}
+		case "--user-id":
+			if i+1 < len(args) {
+				userID = args[i+1]
+				i++
+			}
+		case "--username":
+			if i+1 < len(args) {
+				username = args[i+1]
+				i++
+			}
+		case "--user":
+			if i+1 < len(args) {
+				userDisplayName = args[i+1]
+				i++
+			}
+		case "--role":
+			if i+1 < len(args) {
+				userRole = args[i+1]
 				i++
 			}
 		case "--daemon":
@@ -195,7 +225,15 @@ func agentCmd() {
 		daemonMode(cfg, agentLoop, msgBus, channel)
 	} else if message != "" {
 		ctx := context.Background()
-		response, err := agentLoop.ProcessDirectWithChannel(ctx, message, sessionKey, channel, chatID)
+		identity := agent.UserIdentity{
+			SenderID:    senderID,
+			UserID:      userID,
+			Username:    username,
+			DisplayName: userDisplayName,
+			Role:        userRole,
+			IsGuest:     strings.EqualFold(userRole, "guest"),
+		}
+		response, err := agentLoop.ProcessDirectWithChannelIdentity(ctx, message, sessionKey, channel, chatID, identity)
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Stdout.Sync() //nolint:errcheck

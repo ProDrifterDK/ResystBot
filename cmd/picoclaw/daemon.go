@@ -23,6 +23,9 @@ type daemonInput struct {
 	ChatID   string `json:"chat_id,omitempty"`
 	User     string `json:"user,omitempty"`
 	Username string `json:"username,omitempty"`
+	UserID   string `json:"user_id,omitempty"`
+	Role     string `json:"role,omitempty"`
+	IsGuest  bool   `json:"is_guest,omitempty"`
 	Text     string `json:"text,omitempty"`
 }
 
@@ -336,6 +339,9 @@ func processChat(ctx context.Context, state *daemonState, agentLoop *agent.Agent
 		Metadata: map[string]string{
 			"user":     input.User,
 			"username": input.Username,
+			"user_id":  input.UserID,
+			"role":     input.Role,
+			"is_guest": fmt.Sprintf("%t", input.IsGuest),
 		},
 	}
 
