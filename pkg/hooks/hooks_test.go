@@ -110,6 +110,54 @@ func TestHookInputJSON(t *testing.T) {
 	assert.Equal(t, "Bash", parsed.ToolName)
 	assert.Equal(t, "test-session", parsed.SessionID)
 	assert.Equal(t, "ls", parsed.ToolInput["command"])
+	assert.False(t, parsed.ToolSuccess)
+	assert.False(t, parsed.ToolIsError)
+}
+
+func TestHookInputJSONPostToolUseSignals(t *testing.T) {
+	input := HookInput{
+		Event:        PostToolUse,
+		ToolName:     "Bash",
+		ToolInput:    map[string]any{"command": "ls"},
+		ToolResponse: "output",
+		ToolSuccess:  true,
+		ToolIsError:  false,
+		SessionID:    "test-session",
+	}
+	data, err := json.Marshal(input)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"tool_success":true`)
+	assert.Contains(t, string(data), `"tool_is_error":false`)
+
+	var parsed HookInput
+	require.NoError(t, json.Unmarshal(data, &parsed))
+	assert.Equal(t, PostToolUse, parsed.Event)
+	assert.True(t, parsed.ToolSuccess)
+	assert.False(t, parsed.ToolIsError)
+	assert.Equal(t, "output", parsed.ToolResponse)
+}
+
+func TestHookInputJSONPostToolUseErrorSignals(t *testing.T) {
+	input := HookInput{
+		Event:        PostToolUse,
+		ToolName:     "Bash",
+		ToolInput:    map[string]any{"command": "ls"},
+		ToolResponse: "tool failed",
+		ToolSuccess:  false,
+		ToolIsError:  true,
+		SessionID:    "test-session",
+	}
+	data, err := json.Marshal(input)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"tool_success":false`)
+	assert.Contains(t, string(data), `"tool_is_error":true`)
+
+	var parsed HookInput
+	require.NoError(t, json.Unmarshal(data, &parsed))
+	assert.Equal(t, PostToolUse, parsed.Event)
+	assert.False(t, parsed.ToolSuccess)
+	assert.True(t, parsed.ToolIsError)
+	assert.Equal(t, "tool failed", parsed.ToolResponse)
 }
 
 func TestHookOutputJSON(t *testing.T) {
@@ -249,7 +297,7 @@ func TestExecutorPostToolUseNoError(t *testing.T) {
 	}
 	executor := NewHookExecutor(cfg)
 	assert.NotPanics(t, func() {
-		executor.RunPostToolUse(context.Background(), "Bash", map[string]any{"cmd": "ls"}, "output", "session1")
+		executor.RunPostToolUse(context.Background(), "Bash", map[string]any{"cmd": "ls"}, "output", true, false, "session1")
 	})
 }
 
@@ -261,8 +309,55 @@ func TestExecutorPostToolUseFailureSafe(t *testing.T) {
 	}
 	executor := NewHookExecutor(cfg)
 	assert.NotPanics(t, func() {
-		executor.RunPostToolUse(context.Background(), "Bash", nil, "result", "")
+		executor.RunPostToolUse(context.Background(), "Bash", nil, "result", false, true, "")
 	})
+}
+
+func TestExecutorPostToolUsePassesSuccessSignals(t *testing.T) {
+	skipIfNoSh(t)
+	tmpDir := t.TempDir()
+	outFile := filepath.Join(tmpDir, "post-success.json")
+	script := writeHelperScript(t, "capture-success.sh", fmt.Sprintf("cat > %s", outFile))
+	cfg := &config.HooksConfig{
+		PostToolUse: []config.HookMatcher{
+			{Matcher: "Bash", Hooks: []config.HookEntry{{Type: "command", Command: script}}},
+		},
+	}
+	executor := NewHookExecutor(cfg)
+	executor.RunPostToolUse(context.Background(), "Bash", map[string]any{"command": "ls"}, "output", true, false, "session1")
+
+	data, err := os.ReadFile(outFile)
+	require.NoError(t, err)
+	var input HookInput
+	require.NoError(t, json.Unmarshal(data, &input))
+	assert.Equal(t, PostToolUse, input.Event)
+	assert.True(t, input.ToolSuccess)
+	assert.False(t, input.ToolIsError)
+	assert.Equal(t, "output", input.ToolResponse)
+	assert.Equal(t, "ls", input.ToolInput["command"])
+}
+
+func TestExecutorPostToolUsePassesErrorSignals(t *testing.T) {
+	skipIfNoSh(t)
+	tmpDir := t.TempDir()
+	outFile := filepath.Join(tmpDir, "post-error.json")
+	script := writeHelperScript(t, "capture-error.sh", fmt.Sprintf("cat > %s", outFile))
+	cfg := &config.HooksConfig{
+		PostToolUse: []config.HookMatcher{
+			{Matcher: "Bash", Hooks: []config.HookEntry{{Type: "command", Command: script}}},
+		},
+	}
+	executor := NewHookExecutor(cfg)
+	executor.RunPostToolUse(context.Background(), "Bash", map[string]any{"command": "ls"}, "tool failed", false, true, "session1")
+
+	data, err := os.ReadFile(outFile)
+	require.NoError(t, err)
+	var input HookInput
+	require.NoError(t, json.Unmarshal(data, &input))
+	assert.Equal(t, PostToolUse, input.Event)
+	assert.False(t, input.ToolSuccess)
+	assert.True(t, input.ToolIsError)
+	assert.Equal(t, "tool failed", input.ToolResponse)
 }
 
 func TestExecutorSessionStart(t *testing.T) {

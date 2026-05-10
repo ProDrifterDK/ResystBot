@@ -27,23 +27,25 @@ const (
 )
 
 type HookInput struct {
-	Event          HookEvent       `json:"event"`
-	ToolName       string          `json:"tool_name,omitempty"`
-	ToolInput      map[string]any  `json:"tool_input,omitempty"`
-	ToolResponse   string          `json:"tool_response,omitempty"`
-	SessionID      string          `json:"session_id,omitempty"`
-	UserPrompt     string          `json:"user_prompt,omitempty"`
-	CompactContext string          `json:"compact_context,omitempty"`
+	Event          HookEvent      `json:"event"`
+	ToolName       string         `json:"tool_name,omitempty"`
+	ToolInput      map[string]any `json:"tool_input,omitempty"`
+	ToolResponse   string         `json:"tool_response,omitempty"`
+	ToolSuccess    bool           `json:"tool_success"`
+	ToolIsError    bool           `json:"tool_is_error"`
+	SessionID      string         `json:"session_id,omitempty"`
+	UserPrompt     string         `json:"user_prompt,omitempty"`
+	CompactContext string         `json:"compact_context,omitempty"`
 }
 
 type HookOutput struct {
-	Decision         HookDecision    `json:"decision,omitempty"`
-	Reason           string          `json:"reason,omitempty"`
-	ReplacementTool  string          `json:"replacement_tool,omitempty"`
-	ReplacementInput map[string]any  `json:"replacement_input,omitempty"`
-	ModifiedPrompt   string          `json:"modified_prompt,omitempty"`
-	InjectedContext  string          `json:"injected_context,omitempty"`
-	SuppressOutput   bool            `json:"suppress_output,omitempty"`
+	Decision         HookDecision   `json:"decision,omitempty"`
+	Reason           string         `json:"reason,omitempty"`
+	ReplacementTool  string         `json:"replacement_tool,omitempty"`
+	ReplacementInput map[string]any `json:"replacement_input,omitempty"`
+	ModifiedPrompt   string         `json:"modified_prompt,omitempty"`
+	InjectedContext  string         `json:"injected_context,omitempty"`
+	SuppressOutput   bool           `json:"suppress_output,omitempty"`
 }
 
 type HookResult struct {
