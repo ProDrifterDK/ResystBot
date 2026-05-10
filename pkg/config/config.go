@@ -56,6 +56,7 @@ type Config struct {
 	Gateway   GatewayConfig   `json:"gateway"`
 	Tools     ToolsConfig     `json:"tools"`
 	Memory    MemoryConfig    `json:"memory,omitempty"`
+	Learning  LearningConfig  `json:"learning,omitempty"`
 	Heartbeat HeartbeatConfig `json:"heartbeat"`
 	Devices   DevicesConfig   `json:"devices"`
 	Hooks     HooksConfig     `json:"hooks,omitempty"`
@@ -86,6 +87,7 @@ func (c Config) MarshalJSON() ([]byte, error) {
 	aux := &struct {
 		Providers *ProvidersConfig `json:"providers,omitempty"`
 		Session   *SessionConfig   `json:"session,omitempty"`
+		Learning  *LearningConfig  `json:"learning,omitempty"`
 		*Alias
 	}{
 		Alias: (*Alias)(&c),
@@ -99,6 +101,11 @@ func (c Config) MarshalJSON() ([]byte, error) {
 	// Only include session if not empty
 	if c.Session.DMScope != "" || len(c.Session.IdentityLinks) > 0 {
 		aux.Session = &c.Session
+	}
+
+	// Only include learning when enabled or explicitly customized.
+	if defaultLearning := DefaultLearningConfig(); c.Learning.Enabled || c.Learning != defaultLearning {
+		aux.Learning = &c.Learning
 	}
 
 	return json.Marshal(aux)
@@ -545,6 +552,144 @@ type MemoryConfig struct {
 	ArchivePath               string  `json:"archive_path"                env:"PICOCLAW_ARCHIVE_PATH"`
 }
 
+// LearningConfig holds configuration for the learning system.
+type LearningConfig struct {
+	Enabled                bool    `json:"enabled"                        env:"PICOCLAW_LEARNING_ENABLED"`
+	CrossSessionClustering bool    `json:"cross_session_clustering_enabled" env:"PICOCLAW_LEARNING_CROSS_SESSION_CLUSTERING_ENABLED"`
+	QdrantURL              string  `json:"qdrant_url"                     env:"PICOCLAW_LEARNING_QDRANT_URL"`
+	CollectionName         string  `json:"collection_name"                env:"PICOCLAW_LEARNING_COLLECTION_NAME"`
+	EmbeddingURL           string  `json:"embedding_url"                  env:"PICOCLAW_LEARNING_EMBEDDING_URL"`
+	EmbeddingModel         string  `json:"embedding_model"                env:"PICOCLAW_LEARNING_EMBEDDING_MODEL"`
+	MaxRetrievedLessons    int     `json:"max_retrieved_lessons"          env:"PICOCLAW_LEARNING_MAX_RETRIEVED_LESSONS"`
+	MinConfidenceThreshold float64 `json:"min_confidence_threshold"       env:"PICOCLAW_LEARNING_MIN_CONFIDENCE_THRESHOLD"`
+	MinUserMessageChars    int     `json:"min_user_message_chars"         env:"PICOCLAW_LEARNING_MIN_USER_MESSAGE_CHARS"`
+	DupSimilarityThreshold float64 `json:"dup_similarity_threshold"       env:"PICOCLAW_LEARNING_DUP_SIMILARITY_THRESHOLD"`
+	DecayRate              float64 `json:"decay_rate"                     env:"PICOCLAW_LEARNING_DECAY_RATE"`
+	CorrectionSessionTTL   int     `json:"correction_session_ttl_minutes" env:"PICOCLAW_LEARNING_CORRECTION_SESSION_TTL_MINUTES"`
+	MaxUserMessageChars    int     `json:"max_user_message_chars"         env:"PICOCLAW_LEARNING_MAX_USER_MESSAGE_CHARS"`
+	MaxFinalResponseChars  int     `json:"max_final_response_chars"       env:"PICOCLAW_LEARNING_MAX_FINAL_RESPONSE_CHARS"`
+	MaxToolArgsChars       int     `json:"max_tool_args_chars"            env:"PICOCLAW_LEARNING_MAX_TOOL_ARGS_CHARS"`
+	MaxToolResultChars     int     `json:"max_tool_result_chars"          env:"PICOCLAW_LEARNING_MAX_TOOL_RESULT_CHARS"`
+	MaxErrorMessageChars   int     `json:"max_error_message_chars"        env:"PICOCLAW_LEARNING_MAX_ERROR_MESSAGE_CHARS"`
+	MaxLessonFieldChars    int     `json:"max_lesson_field_chars"         env:"PICOCLAW_LEARNING_MAX_LESSON_FIELD_CHARS"`
+}
+
+func (l LearningConfig) GetQdrantURL() string {
+	if l.QdrantURL == "" {
+		return "http://127.0.0.1:6333"
+	}
+	return l.QdrantURL
+}
+
+func (l LearningConfig) GetCrossSessionClusteringEnabled() bool {
+	return l.CrossSessionClustering
+}
+
+func (l LearningConfig) GetCollectionName() string {
+	if l.CollectionName == "" {
+		return "resystbot_learnings"
+	}
+	return l.CollectionName
+}
+
+func (l LearningConfig) GetEmbeddingURL() string {
+	if l.EmbeddingURL == "" {
+		return "http://127.0.0.1:8080/v1"
+	}
+	return l.EmbeddingURL
+}
+
+func (l LearningConfig) GetEmbeddingModel() string {
+	if l.EmbeddingModel == "" {
+		return "bge-m3"
+	}
+	return l.EmbeddingModel
+}
+
+func (l LearningConfig) GetMaxRetrievedLessons() int {
+	if l.MaxRetrievedLessons == 0 {
+		return 3
+	}
+	return l.MaxRetrievedLessons
+}
+
+func (l LearningConfig) GetMinConfidenceThreshold() float64 {
+	if l.MinConfidenceThreshold == 0 {
+		return 0.3
+	}
+	return l.MinConfidenceThreshold
+}
+
+func (l LearningConfig) GetMinUserMessageChars() int {
+	if l.MinUserMessageChars == 0 {
+		return 30
+	}
+	return l.MinUserMessageChars
+}
+
+func (l LearningConfig) GetDupSimilarityThreshold() float64 {
+	if l.DupSimilarityThreshold == 0 {
+		return 0.92
+	}
+	return l.DupSimilarityThreshold
+}
+
+func (l LearningConfig) GetDecayRate() float64 {
+	if l.DecayRate == 0 {
+		return 0.01
+	}
+	return l.DecayRate
+}
+
+func (l LearningConfig) GetCorrectionSessionTTL() int {
+	if l.CorrectionSessionTTL == 0 {
+		return 10
+	}
+	return l.CorrectionSessionTTL
+}
+
+func (l LearningConfig) GetMaxUserMessageChars() int {
+	if l.MaxUserMessageChars == 0 {
+		return 4000
+	}
+	return l.MaxUserMessageChars
+}
+
+func (l LearningConfig) GetMaxFinalResponseChars() int {
+	if l.MaxFinalResponseChars == 0 {
+		return 8000
+	}
+	return l.MaxFinalResponseChars
+}
+
+func (l LearningConfig) GetMaxToolArgsChars() int {
+	if l.MaxToolArgsChars == 0 {
+		return 4000
+	}
+	return l.MaxToolArgsChars
+}
+
+func (l LearningConfig) GetMaxToolResultChars() int {
+	if l.MaxToolResultChars == 0 {
+		return 8000
+	}
+	return l.MaxToolResultChars
+}
+
+func (l LearningConfig) GetMaxErrorMessageChars() int {
+	if l.MaxErrorMessageChars == 0 {
+		return 2000
+	}
+	return l.MaxErrorMessageChars
+}
+
+func (l LearningConfig) GetMaxLessonFieldChars() int {
+	if l.MaxLessonFieldChars == 0 {
+		return 2000
+	}
+	return l.MaxLessonFieldChars
+}
+
 func (m MemoryConfig) GetQdrantURL() string {
 	if m.QdrantURL == "" {
 		return "http://127.0.0.1:6333"
@@ -554,14 +699,14 @@ func (m MemoryConfig) GetQdrantURL() string {
 
 func (m MemoryConfig) GetEmbeddingURL() string {
 	if m.EmbeddingURL == "" {
-		return "http://127.0.0.1:1234/v1"
+		return "http://127.0.0.1:8080/v1"
 	}
 	return m.EmbeddingURL
 }
 
 func (m MemoryConfig) GetEmbeddingModel() string {
 	if m.EmbeddingModel == "" {
-		return "text-embedding-nomic-embed-text-v1.5"
+		return "bge-m3"
 	}
 	return m.EmbeddingModel
 }

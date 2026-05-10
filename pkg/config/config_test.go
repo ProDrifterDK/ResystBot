@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -358,6 +359,192 @@ func TestDefaultConfig_OpenAIWebSearchEnabled(t *testing.T) {
 	cfg := DefaultConfig()
 	if !cfg.Providers.OpenAI.WebSearch {
 		t.Fatal("DefaultConfig().Providers.OpenAI.WebSearch should be true")
+	}
+}
+
+func TestDefaultConfig_LearningDefaults(t *testing.T) {
+	cfg := DefaultConfig()
+
+	if cfg.Learning.Enabled {
+		t.Fatal("Learning should be disabled by default")
+	}
+	if cfg.Learning.GetCrossSessionClusteringEnabled() {
+		t.Fatal("Cross-session clustering should be disabled by default")
+	}
+	if cfg.Learning.GetCollectionName() != "resystbot_learnings" {
+		t.Fatalf("Learning collection = %q, want %q", cfg.Learning.GetCollectionName(), "resystbot_learnings")
+	}
+	if cfg.Learning.GetMaxRetrievedLessons() != 3 {
+		t.Fatalf("Learning max retrieved lessons = %d, want 3", cfg.Learning.GetMaxRetrievedLessons())
+	}
+	if cfg.Learning.GetCorrectionSessionTTL() != 10 {
+		t.Fatalf("Learning correction session TTL = %d, want 10", cfg.Learning.GetCorrectionSessionTTL())
+	}
+	if cfg.Learning.GetMaxUserMessageChars() == 0 {
+		t.Fatal("Learning max user message chars should be non-zero")
+	}
+	if cfg.Learning.GetMaxFinalResponseChars() == 0 {
+		t.Fatal("Learning max final response chars should be non-zero")
+	}
+	if cfg.Learning.GetMaxToolArgsChars() == 0 {
+		t.Fatal("Learning max tool args chars should be non-zero")
+	}
+	if cfg.Learning.GetMaxToolResultChars() == 0 {
+		t.Fatal("Learning max tool result chars should be non-zero")
+	}
+	if cfg.Learning.GetMaxErrorMessageChars() == 0 {
+		t.Fatal("Learning max error message chars should be non-zero")
+	}
+	if cfg.Learning.GetMaxLessonFieldChars() == 0 {
+		t.Fatal("Learning max lesson field chars should be non-zero")
+	}
+	if cfg.Learning.GetCollectionName() == cfg.Memory.GetCollectionName() {
+		t.Fatalf("Learning collection should differ from memory collection, both are %q", cfg.Learning.GetCollectionName())
+	}
+}
+
+func TestConfigMarshalJSON_OmitsDefaultDisabledLearning(t *testing.T) {
+	cfg := DefaultConfig()
+
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("Marshal() error: %v", err)
+	}
+	if strings.Contains(string(data), `"learning"`) {
+		t.Fatalf("default disabled learning config should be omitted from JSON: %s", string(data))
+	}
+}
+
+func TestLoadConfig_LearningDefaultsWhenAbsent(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	configJSON := `{
+  "agents": {"defaults": {"workspace": "./workspace", "model": "gpt4", "max_tokens": 8192, "max_tool_iterations": 20}},
+  "model_list": [{"model_name": "gpt4", "model": "openai/gpt-5.2", "api_key": "x"}]
+}`
+	if err := os.WriteFile(configPath, []byte(configJSON), 0o600); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() error: %v", err)
+	}
+	if cfg.Learning.Enabled {
+		t.Fatal("Learning should remain disabled when learning section is absent")
+	}
+	if cfg.Learning.GetCrossSessionClusteringEnabled() {
+		t.Fatal("Cross-session clustering should remain disabled when learning section is absent")
+	}
+	if cfg.Learning.GetCollectionName() != "resystbot_learnings" {
+		t.Fatalf("Learning collection = %q, want %q", cfg.Learning.GetCollectionName(), "resystbot_learnings")
+	}
+	if cfg.Learning.GetCorrectionSessionTTL() != 10 {
+		t.Fatalf("Learning correction session TTL = %d, want 10", cfg.Learning.GetCorrectionSessionTTL())
+	}
+	if cfg.Learning.GetMaxLessonFieldChars() == 0 {
+		t.Fatal("Learning max lesson field chars should remain non-zero when section is absent")
+	}
+}
+
+func TestLoadConfig_LearningRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	roundTripPath := filepath.Join(dir, "roundtrip.json")
+	configJSON := `{
+  "agents": {"defaults": {"workspace": "./workspace", "model": "gpt4", "max_tokens": 8192, "max_tool_iterations": 20}},
+  "model_list": [{"model_name": "gpt4", "model": "openai/gpt-5.2", "api_key": "x"}],
+  "learning": {
+    "enabled": true,
+	    "cross_session_clustering_enabled": true,
+    "qdrant_url": "http://localhost:7333",
+    "collection_name": "custom_learnings",
+    "embedding_url": "http://localhost:2234/v1",
+    "embedding_model": "custom-embed",
+    "max_retrieved_lessons": 7,
+    "min_confidence_threshold": 0.55,
+	    "min_user_message_chars": 42,
+	    "dup_similarity_threshold": 0.97,
+	    "decay_rate": 0.02,
+	    "correction_session_ttl_minutes": 25,
+	    "max_user_message_chars": 1111,
+	    "max_final_response_chars": 2222,
+	    "max_tool_args_chars": 3333,
+	    "max_tool_result_chars": 4444,
+	    "max_error_message_chars": 5555,
+	    "max_lesson_field_chars": 6666
+	  }
+}`
+	if err := os.WriteFile(configPath, []byte(configJSON), 0o600); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() error: %v", err)
+	}
+	if err := SaveConfig(roundTripPath, cfg); err != nil {
+		t.Fatalf("SaveConfig() error: %v", err)
+	}
+
+	reloaded, err := LoadConfig(roundTripPath)
+	if err != nil {
+		t.Fatalf("LoadConfig(roundTripPath) error: %v", err)
+	}
+
+	if !reloaded.Learning.Enabled {
+		t.Fatal("Learning should remain enabled after round-trip")
+	}
+	if !reloaded.Learning.CrossSessionClustering {
+		t.Fatal("Cross-session clustering should remain enabled after round-trip")
+	}
+	if reloaded.Learning.QdrantURL != "http://localhost:7333" {
+		t.Fatalf("Learning.QdrantURL = %q", reloaded.Learning.QdrantURL)
+	}
+	if reloaded.Learning.CollectionName != "custom_learnings" {
+		t.Fatalf("Learning.CollectionName = %q", reloaded.Learning.CollectionName)
+	}
+	if reloaded.Learning.EmbeddingURL != "http://localhost:2234/v1" {
+		t.Fatalf("Learning.EmbeddingURL = %q", reloaded.Learning.EmbeddingURL)
+	}
+	if reloaded.Learning.EmbeddingModel != "custom-embed" {
+		t.Fatalf("Learning.EmbeddingModel = %q", reloaded.Learning.EmbeddingModel)
+	}
+	if reloaded.Learning.MaxRetrievedLessons != 7 {
+		t.Fatalf("Learning.MaxRetrievedLessons = %d", reloaded.Learning.MaxRetrievedLessons)
+	}
+	if reloaded.Learning.MinConfidenceThreshold != 0.55 {
+		t.Fatalf("Learning.MinConfidenceThreshold = %v", reloaded.Learning.MinConfidenceThreshold)
+	}
+	if reloaded.Learning.MinUserMessageChars != 42 {
+		t.Fatalf("Learning.MinUserMessageChars = %d", reloaded.Learning.MinUserMessageChars)
+	}
+	if reloaded.Learning.DupSimilarityThreshold != 0.97 {
+		t.Fatalf("Learning.DupSimilarityThreshold = %v", reloaded.Learning.DupSimilarityThreshold)
+	}
+	if reloaded.Learning.DecayRate != 0.02 {
+		t.Fatalf("Learning.DecayRate = %v", reloaded.Learning.DecayRate)
+	}
+	if reloaded.Learning.CorrectionSessionTTL != 25 {
+		t.Fatalf("Learning.CorrectionSessionTTL = %d", reloaded.Learning.CorrectionSessionTTL)
+	}
+	if reloaded.Learning.MaxUserMessageChars != 1111 {
+		t.Fatalf("Learning.MaxUserMessageChars = %d", reloaded.Learning.MaxUserMessageChars)
+	}
+	if reloaded.Learning.MaxFinalResponseChars != 2222 {
+		t.Fatalf("Learning.MaxFinalResponseChars = %d", reloaded.Learning.MaxFinalResponseChars)
+	}
+	if reloaded.Learning.MaxToolArgsChars != 3333 {
+		t.Fatalf("Learning.MaxToolArgsChars = %d", reloaded.Learning.MaxToolArgsChars)
+	}
+	if reloaded.Learning.MaxToolResultChars != 4444 {
+		t.Fatalf("Learning.MaxToolResultChars = %d", reloaded.Learning.MaxToolResultChars)
+	}
+	if reloaded.Learning.MaxErrorMessageChars != 5555 {
+		t.Fatalf("Learning.MaxErrorMessageChars = %d", reloaded.Learning.MaxErrorMessageChars)
+	}
+	if reloaded.Learning.MaxLessonFieldChars != 6666 {
+		t.Fatalf("Learning.MaxLessonFieldChars = %d", reloaded.Learning.MaxLessonFieldChars)
 	}
 }
 

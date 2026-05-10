@@ -8,6 +8,30 @@ package config
 // DefaultMCPTimeout is the default timeout in seconds for MCP tool calls.
 const DefaultMCPTimeout = 30
 
+// DefaultLearningConfig returns the default learning configuration.
+func DefaultLearningConfig() LearningConfig {
+	return LearningConfig{
+		Enabled:                false,
+		CrossSessionClustering: false,
+		QdrantURL:              "http://127.0.0.1:6333",
+		CollectionName:         "resystbot_learnings",
+		EmbeddingURL:           "http://127.0.0.1:8080/v1",
+		EmbeddingModel:         "bge-m3",
+		MaxRetrievedLessons:    3,
+		MinConfidenceThreshold: 0.3,
+		MinUserMessageChars:    30,
+		DupSimilarityThreshold: 0.92,
+		DecayRate:              0.01,
+		CorrectionSessionTTL:   10,
+		MaxUserMessageChars:    4000,
+		MaxFinalResponseChars:  8000,
+		MaxToolArgsChars:       4000,
+		MaxToolResultChars:     8000,
+		MaxErrorMessageChars:   2000,
+		MaxLessonFieldChars:    2000,
+	}
+}
+
 // DefaultConfig returns the default configuration for PicoClaw.
 func DefaultConfig() *Config {
 	return &Config{
@@ -322,6 +346,7 @@ func DefaultConfig() *Config {
 				},
 			},
 		},
+		Learning: DefaultLearningConfig(),
 		Heartbeat: HeartbeatConfig{
 			Enabled:  true,
 			Interval: 30,
