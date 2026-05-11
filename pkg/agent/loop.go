@@ -739,9 +739,12 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		}
 	}
 
-	// Use routed session key, but honor pre-set agent-scoped keys (for ProcessDirect/cron)
+	// Use routed session key by default, but honor explicit Telegram session keys.
+	// Telegram daemon/transport/direct integrations set stable keys like "telegram:<chat_id>";
+	// honoring them prevents different Telegram users from collapsing into agent:main:main.
+	// Keep non-Telegram legacy behavior routed unless the key is already agent-scoped.
 	sessionKey := route.SessionKey
-	if msg.SessionKey != "" && strings.HasPrefix(msg.SessionKey, "agent:") {
+	if msg.SessionKey != "" && (strings.HasPrefix(msg.SessionKey, "agent:") || msg.Channel == "telegram") {
 		sessionKey = msg.SessionKey
 	}
 

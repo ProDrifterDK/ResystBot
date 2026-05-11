@@ -468,6 +468,42 @@ func TestAgentLoop_Stop(t *testing.T) {
 
 // Mock implementations for testing
 
+func TestProcessDirectWithChannelHonorsExplicitSessionKey(t *testing.T) {
+	workspace := t.TempDir()
+	cfg := &config.Config{Agents: config.AgentsConfig{Defaults: config.AgentDefaults{
+		Workspace:         workspace,
+		Model:             "test-model",
+		MaxTokens:         4096,
+		MaxToolIterations: 3,
+	}}}
+	provider := &simpleMockProvider{response: "session isolated"}
+	al := NewAgentLoop(cfg, bus.NewMessageBus(), provider)
+
+	sharedMain := "agent:main:main"
+	explicit := "telegram:101293943"
+	defaultAgent := al.registry.GetDefaultAgent()
+	defaultAgent.Sessions.SetHistory(sharedMain, []providers.Message{{Role: "user", Content: "Alan-only history"}})
+
+	response, err := al.ProcessDirectWithChannel(context.Background(), "hola", explicit, "telegram", "101293943")
+	if err != nil {
+		t.Fatalf("ProcessDirectWithChannel() error = %v", err)
+	}
+	if response != "session isolated" {
+		t.Fatalf("response = %q, want session isolated", response)
+	}
+
+	isolatedHistory := defaultAgent.Sessions.GetHistory(explicit)
+	if len(isolatedHistory) == 0 {
+		t.Fatalf("expected explicit session %q to receive history", explicit)
+	}
+	mainHistory := defaultAgent.Sessions.GetHistory(sharedMain)
+	for _, msg := range mainHistory {
+		if msg.Content == "hola" || msg.Content == "session isolated" {
+			t.Fatalf("shared main session received telegram turn: %#v", mainHistory)
+		}
+	}
+}
+
 type simpleMockProvider struct {
 	response string
 }
