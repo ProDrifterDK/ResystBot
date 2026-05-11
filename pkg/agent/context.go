@@ -320,9 +320,6 @@ func (cb *ContextBuilder) BuildMessages(
 	if channel != "" && chatID != "" {
 		systemPrompt += fmt.Sprintf("\n\n## Current Session\nChannel: %s\nChat ID: %s", channel, chatID)
 	}
-	if section := buildInterlocutorSection(identity); section != "" {
-		systemPrompt += section
-	}
 
 	// Inject pending TeamForge inbox notifications
 	if tfInbox := ReadTeamForgeInbox(); tfInbox != "" {
@@ -349,6 +346,11 @@ func (cb *ContextBuilder) BuildMessages(
 
 	if summary != "" {
 		systemPrompt += "\n\n## Summary of Previous Conversation\n\n" + summary
+	}
+	if section := buildInterlocutorSection(identity); section != "" {
+		// Keep current-turn identity last so it wins over static bootstrap files
+		// (AGENTS.md/USER.md) and over summaries from previous conversations.
+		systemPrompt += section
 	}
 
 	history = sanitizeHistoryForProvider(history)
@@ -392,7 +394,7 @@ func buildInterlocutorSection(identity UserIdentity) string {
 
 	var sb strings.Builder
 	sb.WriteString("\n\n## Current Interlocutor\n")
-	sb.WriteString("This section describes the human for the current turn and supersedes any static bootstrap text that assumes the user is Alan. Do not assume the interlocutor is Alan unless this section says so.\n")
+	sb.WriteString("AUTHORITATIVE CURRENT-TURN IDENTITY. This section supersedes static bootstrap text (AGENTS.md/USER.md), memories, and previous conversation summaries that assume the user is Alan. Answer identity questions from this section, not from old history. Do not call the interlocutor Alan unless this section says they are Alan/ProDrifterDK.\n")
 	if displayName != "" {
 		fmt.Fprintf(&sb, "Display name: %s\n", displayName)
 	}
