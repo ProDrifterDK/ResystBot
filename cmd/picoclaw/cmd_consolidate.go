@@ -57,22 +57,22 @@ func consolidateCmd() {
 	reflectionDir := filepath.Join(cfg.WorkspacePath(), "mind", "reflections")
 
 	deps := &memory.ConsolidationDeps{
-		Store:             qdrant,
-		Embedder:          embedder,
-		LLM:               llm,
-		Archiver:          memory.NewArchiveWriter(archivePath),
+		Store:    qdrant,
+		Embedder: embedder,
+		LLM:      llm,
+		Archiver: memory.NewArchiveWriter(archivePath),
 		Config: memory.ConsolidationConfig{
 			SimilarityThreshold: cfg.Memory.GetSimilarityThreshold(),
 			PruneScoreThreshold: cfg.Memory.GetPruneScoreThreshold(),
 			PruneMinAgeDays:     cfg.Memory.GetPruneMinAgeDays(),
 			DecayRate:           cfg.Memory.GetDecayRate(),
 		},
-		ReflectionDir:      reflectionDir,
-		DryRun:             dryRun,
-		StoreAvailable:     true,
-		EmbedderAvailable:  true,
-		LLMAvailable:       true,
-		ArchiverAvailable:  true,
+		ReflectionDir:     reflectionDir,
+		DryRun:            dryRun,
+		StoreAvailable:    true,
+		EmbedderAvailable: true,
+		LLMAvailable:      true,
+		ArchiverAvailable: true,
 	}
 
 	if err := qdrant.Ping(ctx); err != nil {
@@ -141,11 +141,30 @@ func bootstrapLLM(cfg *config.Config) (baseURL, model, apiKey string) {
 			if m.APIBase != "" {
 				apiBase = m.APIBase
 			}
-			return apiBase, m.Model, m.APIKey
+			return apiBase, consolidationModelID(m.Model), m.APIKey
 		}
 	}
 
 	return "https://openrouter.ai/api/v1", "openrouter/" + modelName, ""
+}
+
+func consolidationModelID(model string) string {
+	model = strings.TrimSpace(model)
+	protocol, modelID, found := strings.Cut(model, "/")
+	if !found || modelID == "" {
+		return model
+	}
+
+	switch strings.ToLower(protocol) {
+	case "openai", "openrouter", "groq", "zhipu", "gemini", "nvidia",
+		"ollama", "moonshot", "shengsuanyun", "deepseek", "cerebras",
+		"volcengine", "vllm", "qwen", "mistral", "anthropic",
+		"antigravity", "claude-cli", "claudecli", "codex-cli", "codexcli",
+		"github-copilot", "copilot":
+		return modelID
+	default:
+		return model
+	}
 }
 
 func ensureLMStudio(modelPath string) bool {
