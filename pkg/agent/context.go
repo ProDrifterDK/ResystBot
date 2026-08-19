@@ -70,6 +70,11 @@ func (cb *ContextBuilder) SetRetriever(r memory.MemoryRetriever) {
 	cb.retriever = r
 }
 
+// MemoryStore returns the persistent markdown memory store.
+func (cb *ContextBuilder) MemoryStore() *MemoryStore {
+	return cb.memory
+}
+
 // SetLearningRetriever sets the lesson retriever and config for prompt injection.
 func (cb *ContextBuilder) SetLearningRetriever(lr learningRetriever, cfg *config.LearningConfig) {
 	cb.learningRetriever = lr
@@ -319,6 +324,11 @@ func (cb *ContextBuilder) BuildMessages(
 	// Add Current Session info if provided
 	if channel != "" && chatID != "" {
 		systemPrompt += fmt.Sprintf("\n\n## Current Session\nChannel: %s\nChat ID: %s", channel, chatID)
+
+		// Per-chat user memory (memory/users/<channel>-<chatID>.md)
+		if userMem := cb.memory.ReadUser(channel, chatID); userMem != "" {
+			systemPrompt += "\n\n# User Memory\nThe following is what you know about the person in the current chat. Keep it updated with the memory tool (target 'user').\n\n" + userMem
+		}
 	}
 
 	// Inject pending TeamForge inbox notifications

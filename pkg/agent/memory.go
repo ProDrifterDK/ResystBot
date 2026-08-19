@@ -11,16 +11,26 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
+	"unicode"
+)
+
+// Char limits for persistent memory files, mirroring Hermes' memory config.
+const (
+	MaxLongTermChars = 100000
+	MaxUserChars     = 30000
 )
 
 // MemoryStore manages persistent memory for the agent.
-// - Long-term memory: memory/MEMORY.md
+// - Long-term memory: memory/MEMORY.md (global, shared across chats)
+// - User memory: memory/users/<channel>-<chatID>.md (per chat)
 // - Daily notes: memory/YYYYMM/YYYYMMDD.md
 type MemoryStore struct {
 	workspace  string
 	memoryDir  string
 	memoryFile string
+	mu         sync.Mutex // serializes writes
 }
 
 // NewMemoryStore creates a new MemoryStore with the given workspace path.
@@ -58,7 +68,97 @@ func (ms *MemoryStore) ReadLongTerm() string {
 
 // WriteLongTerm writes content to the long-term memory file (MEMORY.md).
 func (ms *MemoryStore) WriteLongTerm(content string) error {
-	return os.WriteFile(ms.memoryFile, []byte(content), 0o644)
+	_, err := ms.Update("memory", "", "", func(string) (string, error) { return content, nil })
+	return err
+}
+
+// userFile returns the path to the per-chat user memory file
+// (memory/users/<channel>-<chatID>.md). Channel and chat ID are sanitized so
+// the file always lands directly inside the users directory.
+func (ms *MemoryStore) userFile(channel, chatID string) string {
+	return filepath.Join(ms.memoryDir, "users", sanitizeUserKey(channel+"-"+chatID)+".md")
+}
+
+func sanitizeUserKey(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_' {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune('_')
+		}
+	}
+	return b.String()
+}
+
+// ReadUser reads the user memory for the given chat.
+// Returns empty string if chatID is empty or the file doesn't exist.
+func (ms *MemoryStore) ReadUser(channel, chatID string) string {
+	if chatID == "" {
+		return ""
+	}
+	if data, err := os.ReadFile(ms.userFile(channel, chatID)); err == nil {
+		return string(data)
+	}
+	return ""
+}
+
+// WriteUser writes content to the user memory file for the given chat.
+func (ms *MemoryStore) WriteUser(channel, chatID, content string) error {
+	_, err := ms.Update("user", channel, chatID, func(string) (string, error) { return content, nil })
+	return err
+}
+
+// LimitChars returns the char limit for a memory target ("memory" or "user").
+func (ms *MemoryStore) LimitChars(target string) int {
+	if target == "user" {
+		return MaxUserChars
+	}
+	return MaxLongTermChars
+}
+
+// Update applies fn to the current content of the target file and writes the
+// result, holding the write lock across the whole read-modify-write so
+// concurrent chats cannot interleave writes. target is "memory" (MEMORY.md)
+// or "user" (per-chat file, requires chatID). The result is rejected if it
+// exceeds the target's char limit. Returns the final content written.
+func (ms *MemoryStore) Update(target, channel, chatID string, fn func(string) (string, error)) (string, error) {
+	var path string
+	if target == "user" {
+		if chatID == "" {
+			return "", fmt.Errorf("user memory requires a chat ID")
+		}
+		path = ms.userFile(channel, chatID)
+	} else {
+		path = ms.memoryFile
+	}
+	limit := ms.LimitChars(target)
+
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+
+	var current string
+	if data, err := os.ReadFile(path); err == nil {
+		current = string(data)
+	}
+
+	next, err := fn(current)
+	if err != nil {
+		return "", err
+	}
+	if len(next) > limit {
+		return "", fmt.Errorf("content would be %d chars, exceeding the %d char limit for target %q", len(next), limit, target)
+	}
+
+	if target == "user" {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return "", err
+		}
+	}
+	if err := os.WriteFile(path, []byte(next), 0o644); err != nil {
+		return "", err
+	}
+	return next, nil
 }
 
 // ReadToday reads today's daily note.

@@ -110,6 +110,7 @@ func newAgentInstanceWithMCPManager(
 
 	contextBuilder := NewContextBuilder(workspace)
 	contextBuilder.SetToolsRegistry(toolsRegistry)
+	toolsRegistry.Register(tools.NewMemoryTool(contextBuilder.MemoryStore()))
 
 	// Skills v2: create trigger engine with agent's skill config
 	triggerConfig := skills.TriggerConfig{

@@ -1503,6 +1503,11 @@ func (al *AgentLoop) updateToolContexts(agent *AgentInstance, channel, chatID st
 			st.SetContext(channel, chatID)
 		}
 	}
+	if tool, ok := agent.Tools.Get("memory"); ok {
+		if mt, ok := tool.(tools.ContextualTool); ok {
+			mt.SetContext(channel, chatID)
+		}
+	}
 }
 
 // maybeSummarize triggers summarization if the session history exceeds thresholds.
