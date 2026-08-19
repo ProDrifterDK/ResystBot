@@ -446,7 +446,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 			isSystemMsg := msg.Channel == "system"
 			response, err := al.processMessage(ctx, msg)
 			if err != nil {
-				response = fmt.Sprintf("Error processing message: %v", err)
+				response = formatProcessingError(err)
 			}
 
 			if !isSystemMsg && response != "" {
@@ -1111,6 +1111,9 @@ func (al *AgentLoop) runLLMIteration(
 				llmOpts["thinking_budget"] = agent.ThinkingBudget
 				llmOpts["reasoning"] = true
 			}
+			if agent.ThinkingLevel != "" {
+				llmOpts["thinking_level"] = agent.ThinkingLevel
+			}
 			if agent.ContextWindow > 0 && agent.ContextWindow != agent.MaxTokens {
 				llmOpts["context_window"] = agent.ContextWindow
 			}
@@ -1220,10 +1223,7 @@ func (al *AgentLoop) runLLMIteration(
 				strings.Contains(errMsg, "tool_calls") ||
 				(strings.Contains(errMsg, "400") && strings.Contains(errMsg, "tool"))
 
-			isServerError := strings.Contains(errMsg, "502") ||
-				strings.Contains(errMsg, "503") ||
-				strings.Contains(errMsg, "504") ||
-				strings.Contains(errMsg, "unavailable")
+			transientReason, isServerError := transientLLMFailure(err, agent.Model)
 
 			if isToolCallIDError && retry < maxRetries {
 				logger.WarnCF("agent", "Tool call/result pairing error detected, sanitizing and retrying", map[string]any{
@@ -1264,9 +1264,10 @@ func (al *AgentLoop) runLLMIteration(
 				messages = sanitizeMessageHistory(messages)
 				continue
 			} else if isServerError && retry < maxRetries {
-				logger.WarnCF("agent", "Server error detected, retrying", map[string]any{
-					"error": err.Error(),
-					"retry": retry,
+				logger.WarnCF("agent", "Transient LLM error detected, retrying", map[string]any{
+					"error":  err.Error(),
+					"reason": transientReason,
+					"retry":  retry,
 				})
 				time.Sleep(time.Duration(retry+1) * 2 * time.Second) // Exponential backoff
 				continue

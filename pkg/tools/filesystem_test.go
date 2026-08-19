@@ -154,6 +154,43 @@ func TestFilesystemTool_WriteFile_Success(t *testing.T) {
 	}
 }
 
+func TestFilesystemTool_WriteFile_OverwriteGuard(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "existing.txt")
+	if err := os.WriteFile(testFile, []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := NewWriteFileTool("", false)
+	result := tool.Execute(context.Background(), map[string]any{
+		"path":    testFile,
+		"content": "replacement",
+	})
+	if !result.IsError {
+		t.Fatal("expected overwrite without overwrite=true to fail")
+	}
+	if !strings.Contains(result.ForLLM, "append_file") || !strings.Contains(result.ForLLM, "edit_file") {
+		t.Fatalf("overwrite guard should recommend append_file/edit_file: %s", result.ForLLM)
+	}
+	content, err := os.ReadFile(testFile)
+	if err != nil || string(content) != "original" {
+		t.Fatalf("original content changed: %q, %v", content, err)
+	}
+
+	result = tool.Execute(context.Background(), map[string]any{
+		"path":      testFile,
+		"content":   "replacement",
+		"overwrite": true,
+	})
+	if result.IsError {
+		t.Fatalf("overwrite=true failed: %s", result.ForLLM)
+	}
+	content, err = os.ReadFile(testFile)
+	if err != nil || string(content) != "replacement" {
+		t.Fatalf("overwrite content = %q, %v", content, err)
+	}
+}
+
 // TestFilesystemTool_WriteFile_CreateDir verifies directory creation
 func TestFilesystemTool_WriteFile_CreateDir(t *testing.T) {
 	tmpDir := t.TempDir()

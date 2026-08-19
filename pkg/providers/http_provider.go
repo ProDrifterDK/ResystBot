@@ -41,3 +41,17 @@ func (p *HTTPProvider) Chat(
 func (p *HTTPProvider) GetDefaultModel() string {
 	return ""
 }
+
+func (p *HTTPProvider) SupportsThinking() bool {
+	if p == nil || p.delegate == nil {
+		return false
+	}
+	return p.delegate.SupportsThinking()
+}
+
+func (p *HTTPProvider) SetProviderName(providerName string) {
+	if p == nil || p.delegate == nil {
+		return
+	}
+	p.delegate.SetProviderName(providerName)
+}

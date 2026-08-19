@@ -35,6 +35,12 @@ type StatefulProvider interface {
 	Close()
 }
 
+// ThinkingCapable is an optional interface for providers that support
+// extended thinking controls.
+type ThinkingCapable interface {
+	SupportsThinking() bool
+}
+
 // FailoverReason classifies why an LLM request failed for fallback decisions.
 type FailoverReason string
 

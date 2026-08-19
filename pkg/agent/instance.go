@@ -30,6 +30,7 @@ type AgentInstance struct {
 	Temperature         float64
 	ContextWindow       int
 	ThinkingBudget      int
+	ThinkingLevel       string
 	Provider            providers.LLMProvider
 	ProvidersByName     map[string]providers.LLMProvider // provider-name → provider, for fallback routing
 	Sessions            *session.SessionManager
@@ -176,6 +177,8 @@ func newAgentInstanceWithMCPManager(
 		thinkingBudget = agentCfg.ThinkingBudget
 	}
 
+	thinkingLevel := ""
+
 	// Build candidates using the actual API model strings from model_list, not the model_name shorthands.
 	// This ensures OpenRouter gets "google/gemini-3.1-pro-preview" not just "gemini-3.1-pro-preview".
 	// Provider routing is keyed by model config identity, not just protocol, because multiple
@@ -185,6 +188,7 @@ func newAgentInstanceWithMCPManager(
 
 	// Primary candidate
 	if mc, err := cfg.GetModelConfig(model); err == nil && mc != nil {
+		thinkingLevel = mc.ThinkingLevel
 		ref := providers.ParseModelRef(mc.Model, defaults.Provider)
 		if ref != nil {
 			providerKey := fallbackProviderKey(ref, mc.ModelName)
@@ -255,6 +259,7 @@ func newAgentInstanceWithMCPManager(
 		Temperature:     temperature,
 		ContextWindow:   contextWindow,
 		ThinkingBudget:  thinkingBudget,
+		ThinkingLevel:   thinkingLevel,
 		Provider:        provider,
 		ProvidersByName: providersByName,
 		Sessions:        sessionsManager,

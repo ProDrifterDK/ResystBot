@@ -157,7 +157,7 @@ func (t *WriteFileTool) Name() string {
 }
 
 func (t *WriteFileTool) Description() string {
-	return "Write content to a file"
+	return "Write content to a file, replacing any existing content. If the file already exists you must set overwrite=true, which replaces the ENTIRE file. To add to or change part of an existing file without losing its current contents, use append_file or edit_file instead."
 }
 
 func (t *WriteFileTool) Parameters() map[string]any {
@@ -171,6 +171,11 @@ func (t *WriteFileTool) Parameters() map[string]any {
 			"content": map[string]any{
 				"type":        "string",
 				"description": "Content to write to the file",
+			},
+			"overwrite": map[string]any{
+				"type":        "boolean",
+				"description": "Set to true to replace an existing file in full. This discards the file's current contents — to preserve them, use append_file or edit_file instead of write_file.",
+				"default":     false,
 			},
 		},
 		"required": []string{"path", "content"},
@@ -186,6 +191,13 @@ func (t *WriteFileTool) Execute(ctx context.Context, args map[string]any) *ToolR
 	content, ok := args["content"].(string)
 	if !ok {
 		return ErrorResult("content is required")
+	}
+
+	overwrite, _ := args["overwrite"].(bool)
+	if !overwrite {
+		if err := t.fs.Stat(path); err == nil {
+			return ErrorResult(fmt.Sprintf("file: %s already exists. To add to it or change part of it without losing the current contents, use append_file or edit_file. Only set overwrite=true if you intend to replace the entire file.", path))
+		}
 	}
 
 	if err := t.fs.WriteFile(path, []byte(content)); err != nil {
@@ -261,6 +273,7 @@ type fileSystem interface {
 	ReadFile(path string) ([]byte, error)
 	WriteFile(path string, data []byte) error
 	ReadDir(path string) ([]os.DirEntry, error)
+	Stat(path string) error
 }
 
 // hostFs is an unrestricted fileReadWriter that operates directly on the host filesystem.
@@ -282,6 +295,11 @@ func (h *hostFs) ReadFile(path string) ([]byte, error) {
 
 func (h *hostFs) ReadDir(path string) ([]os.DirEntry, error) {
 	return os.ReadDir(path)
+}
+
+func (h *hostFs) Stat(path string) error {
+	_, err := os.Stat(path)
+	return err
 }
 
 func (h *hostFs) WriteFile(path string, data []byte) error {
@@ -389,6 +407,13 @@ func (r *sandboxFs) ReadDir(path string) ([]os.DirEntry, error) {
 		return nil
 	})
 	return entries, err
+}
+
+func (r *sandboxFs) Stat(path string) error {
+	return r.execute(path, func(root *os.Root, relPath string) error {
+		_, err := fs.Stat(root.FS(), relPath)
+		return err
+	})
 }
 
 // Helper to get a safe relative path for os.Root usage

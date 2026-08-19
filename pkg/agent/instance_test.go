@@ -93,3 +93,30 @@ func TestNewAgentInstance_DefaultsTemperatureWhenUnset(t *testing.T) {
 		t.Fatalf("Temperature = %f, want %f", agent.Temperature, 0.7)
 	}
 }
+
+func TestNewAgentInstance_LoadsThinkingLevelFromModelList(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "agent-instance-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfg := &config.Config{
+		Agents: config.AgentsConfig{
+			Defaults: config.AgentDefaults{
+				Workspace: tmpDir,
+				Model:     "deepseek-v4-flash",
+			},
+		},
+		ModelList: []config.ModelConfig{{
+			ModelName:     "deepseek-v4-flash",
+			Model:         "deepseek/deepseek-v4-flash",
+			ThinkingLevel: "xhigh",
+		}},
+	}
+
+	agent := NewAgentInstance(nil, &cfg.Agents.Defaults, cfg, &mockProvider{})
+	if agent.ThinkingLevel != "xhigh" {
+		t.Fatalf("ThinkingLevel = %q, want xhigh", agent.ThinkingLevel)
+	}
+}

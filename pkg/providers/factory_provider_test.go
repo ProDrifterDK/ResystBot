@@ -247,3 +247,23 @@ func TestCreateProviderFromConfig_EmptyModel(t *testing.T) {
 		t.Fatal("CreateProviderFromConfig() expected error for empty model")
 	}
 }
+
+func TestCreateProviderFromConfig_DeepSeekSupportsThinking(t *testing.T) {
+	cfg := &config.ModelConfig{
+		ModelName: "deepseek-v4-flash",
+		Model:     "deepseek/deepseek-v4-flash",
+		APIKey:    "test-key",
+	}
+
+	provider, modelID, err := CreateProviderFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("CreateProviderFromConfig() error = %v", err)
+	}
+	if modelID != "deepseek-v4-flash" {
+		t.Fatalf("modelID = %q, want deepseek-v4-flash", modelID)
+	}
+	thinkingProvider, ok := provider.(ThinkingCapable)
+	if !ok || !thinkingProvider.SupportsThinking() {
+		t.Fatalf("provider %T does not report DeepSeek thinking support", provider)
+	}
+}

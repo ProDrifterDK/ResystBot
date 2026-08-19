@@ -42,6 +42,18 @@ func TestMCPServerConfigValidate_SSEValid(t *testing.T) {
 	}
 }
 
+func TestMCPServerConfigValidate_StreamableHTTPAlias(t *testing.T) {
+	for _, transport := range []string{"streamable-http", "streamable_http", "streamablehttp"} {
+		cfg := MCPServerConfig{Transport: transport, URL: "http://localhost:8080/mcp"}
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("%s should be accepted: %v", transport, err)
+		}
+		if cfg.Transport != "http" {
+			t.Fatalf("%s normalized to %q, want http", transport, cfg.Transport)
+		}
+	}
+}
+
 func TestMCPServerConfigValidate_SSEMissingURL(t *testing.T) {
 	cfg := MCPServerConfig{
 		Transport: "sse",

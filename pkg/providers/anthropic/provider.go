@@ -131,7 +131,23 @@ func buildParams(
 					blocks = append(blocks, anthropic.NewTextBlock(msg.Content))
 				}
 				for _, tc := range msg.ToolCalls {
-					blocks = append(blocks, anthropic.NewToolUseBlock(tc.ID, tc.Arguments, tc.Name))
+					toolName := strings.TrimSpace(tc.Name)
+					args := tc.Arguments
+					if tc.Function != nil {
+						if toolName == "" {
+							toolName = strings.TrimSpace(tc.Function.Name)
+						}
+						if args == nil && strings.TrimSpace(tc.Function.Arguments) != "" {
+							if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+								log.Printf("anthropic: failed to decode tool call arguments for %q: %v", toolName, err)
+								args = map[string]any{"raw": tc.Function.Arguments}
+							}
+						}
+					}
+					if toolName == "" {
+						continue
+					}
+					blocks = append(blocks, anthropic.NewToolUseBlock(tc.ID, args, toolName))
 				}
 				anthropicMessages = append(anthropicMessages, anthropic.NewAssistantMessage(blocks...))
 			} else {

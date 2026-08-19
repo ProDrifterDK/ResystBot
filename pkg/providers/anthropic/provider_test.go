@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -74,6 +75,36 @@ func TestBuildParams_ToolCallMessage(t *testing.T) {
 	}
 	if len(params.Messages) != 3 {
 		t.Fatalf("len(Messages) = %d, want 3", len(params.Messages))
+	}
+}
+
+func TestBuildParams_ToolCallFunctionFallback(t *testing.T) {
+	messages := []Message{
+		{
+			Role: "assistant",
+			ToolCalls: []ToolCall{{
+				ID: "call_1",
+				Function: &FunctionCall{
+					Name:      "get_weather",
+					Arguments: `{"city":"SF"}`,
+				},
+			}},
+		},
+	}
+
+	params, err := buildParams(messages, nil, "claude-sonnet-4.6", map[string]any{})
+	if err != nil {
+		t.Fatalf("buildParams() error: %v", err)
+	}
+	if len(params.Messages) != 1 {
+		t.Fatalf("len(Messages) = %d, want 1", len(params.Messages))
+	}
+	body, err := json.Marshal(params.Messages)
+	if err != nil {
+		t.Fatalf("marshal messages: %v", err)
+	}
+	if !strings.Contains(string(body), `"name":"get_weather"`) || !strings.Contains(string(body), `"city":"SF"`) {
+		t.Fatalf("tool_use payload missing Function fallback data: %s", body)
 	}
 }
 

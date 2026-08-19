@@ -29,6 +29,7 @@ type (
 type Provider struct {
 	apiKey         string
 	apiBase        string
+	providerName   string
 	maxTokensField string // Field name for max tokens (e.g., "max_completion_tokens" for o1/glm models)
 	httpClient     *http.Client
 }
@@ -127,6 +128,9 @@ func (p *Provider) Chat(
 			requestBody["temperature"] = temperature
 		}
 	}
+
+	// Map DeepSeek thinking controls after model normalization.
+	p.applyThinkingControl(requestBody, options)
 
 	// Support for OpenRouter Hunter-Alpha and other models requiring explicit reasoning enable
 	// Also can be used for deepseek/o1 if we want to explicitly enable reasoning in extra_body
@@ -292,6 +296,55 @@ func normalizeModel(model, apiBase string) string {
 	default:
 		return model
 	}
+}
+
+func (p *Provider) SetProviderName(providerName string) {
+	p.providerName = strings.ToLower(strings.TrimSpace(providerName))
+}
+
+func (p *Provider) SupportsThinking() bool {
+	return p.providerName == "deepseek" || isDeepSeekHost(p.apiBase)
+}
+
+func (p *Provider) applyThinkingControl(requestBody map[string]any, options map[string]any) {
+	level, ok := normalizedThinkingLevel(options)
+	if !ok || !p.SupportsThinking() {
+		return
+	}
+
+	switch level {
+	case "off":
+		requestBody["thinking"] = map[string]any{"type": "disabled"}
+	case "low", "medium", "high":
+		requestBody["thinking"] = map[string]any{"type": "enabled"}
+		requestBody["reasoning_effort"] = "high"
+	case "xhigh":
+		requestBody["thinking"] = map[string]any{"type": "enabled"}
+		requestBody["reasoning_effort"] = "max"
+	case "adaptive":
+		log.Printf("openai_compat: DeepSeek does not support thinking_level=%q; using provider default", level)
+	}
+}
+
+func normalizedThinkingLevel(options map[string]any) (string, bool) {
+	raw, ok := options["thinking_level"].(string)
+	if !ok {
+		return "", false
+	}
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "off", "low", "medium", "high", "xhigh", "adaptive":
+		return strings.ToLower(strings.TrimSpace(raw)), true
+	default:
+		return "", false
+	}
+}
+
+func isDeepSeekHost(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(parsed.Hostname(), "api.deepseek.com")
 }
 
 func asInt(v any) (int, bool) {

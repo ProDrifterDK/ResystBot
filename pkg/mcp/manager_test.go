@@ -417,3 +417,18 @@ func TestIsSessionLostError(t *testing.T) {
 		t.Fatal("unexpected lost session classification")
 	}
 }
+
+func TestGetToolsForServersMatchesCaseInsensitively(t *testing.T) {
+	manager := &Manager{connections: map[string]*ServerConnection{
+		"DemoServer": {
+			Name:      "DemoServer",
+			Tools:     []mcpgo.Tool{{Name: "demo_tool"}},
+			connected: true,
+		},
+	}}
+
+	got := manager.GetToolsForServers([]string{"demoserver"})
+	if len(got["DemoServer"]) != 1 || got["DemoServer"][0].Name != "demo_tool" {
+		t.Fatalf("GetToolsForServers() = %#v, want DemoServer tool", got)
+	}
+}

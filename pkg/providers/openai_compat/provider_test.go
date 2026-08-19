@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -379,5 +380,79 @@ func TestProviderChat_HunterAlpha(t *testing.T) {
 	details := out.ReasoningDetails.(map[string]any)
 	if details["step"] != float64(1) {
 		t.Fatalf("ReasoningDetails[step] = %v, want 1", details["step"])
+	}
+}
+
+func TestProviderChat_MapsDeepSeekThinkingLevel(t *testing.T) {
+	var requestBody map[string]any
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": "ok"}, "finish_reason": "stop"}},
+		})
+	}))
+	defer server.Close()
+
+	p := NewProvider("key", server.URL, "")
+	p.SetProviderName("deepseek")
+	_, err := p.Chat(
+		t.Context(),
+		[]Message{{Role: "user", Content: "hi"}},
+		nil,
+		"deepseek-v4-flash",
+		map[string]any{"thinking_level": "xhigh"},
+	)
+	if err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+
+	thinking, ok := requestBody["thinking"].(map[string]any)
+	if !ok || thinking["type"] != "enabled" {
+		t.Fatalf("thinking = %#v, want enabled", requestBody["thinking"])
+	}
+	if requestBody["reasoning_effort"] != "max" {
+		t.Fatalf("reasoning_effort = %#v, want max", requestBody["reasoning_effort"])
+	}
+}
+
+func TestProviderChat_PreservesGeminiThoughtSignatureSnakeCase(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]any{
+					"tool_calls": []map[string]any{{
+						"id":       "call_1",
+						"function": map[string]any{"name": "lookup", "arguments": "{}"},
+						"extra_content": map[string]any{
+							"google": map[string]any{"thought_signature": "sig-123"},
+						},
+					}},
+				},
+				"finish_reason": "tool_calls",
+			}},
+		})
+	}))
+	defer server.Close()
+
+	p := NewProvider("key", server.URL, "")
+	out, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "gemini-3-flash", nil)
+	if err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+	if len(out.ToolCalls) != 1 || out.ToolCalls[0].ExtraContent == nil || out.ToolCalls[0].ExtraContent.Google.ThoughtSignature != "sig-123" {
+		t.Fatalf("thought signature not parsed: %#v", out.ToolCalls)
+	}
+	serialized, err := json.Marshal([]Message{{Role: "assistant", ToolCalls: out.ToolCalls}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(serialized), `"thought_signature":"sig-123"`) {
+		t.Fatalf("serialized history missing snake_case thought_signature: %s", serialized)
 	}
 }

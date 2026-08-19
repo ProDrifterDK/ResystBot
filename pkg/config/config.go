@@ -451,6 +451,7 @@ type ModelConfig struct {
 	// Optional optimizations
 	RPM            int    `json:"rpm,omitempty"`              // Requests per minute limit
 	MaxTokensField string `json:"max_tokens_field,omitempty"` // Field name for max tokens (e.g., "max_completion_tokens")
+	ThinkingLevel  string `json:"thinking_level,omitempty"`   // Extended thinking: off|low|medium|high|xhigh|adaptive
 }
 
 // Validate checks if the ModelConfig has all required fields.
@@ -845,6 +846,7 @@ func (c *MCPServerConfig) Validate() error {
 	if c.Transport == "" {
 		c.Transport = "stdio"
 	}
+	c.Transport = NormalizeMCPTransportType(c.Transport)
 	switch c.Transport {
 	case "stdio":
 		if c.Command == "" {
@@ -859,7 +861,7 @@ func (c *MCPServerConfig) Validate() error {
 			return fmt.Errorf("http transport requires 'url'")
 		}
 	default:
-		return fmt.Errorf("unsupported transport: %q (use 'stdio', 'sse', or 'http')", c.Transport)
+		return fmt.Errorf("unsupported transport: %q (use 'stdio', 'sse', 'http', or 'streamable-http')", c.Transport)
 	}
 	return nil
 }

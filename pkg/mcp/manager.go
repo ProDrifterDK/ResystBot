@@ -93,7 +93,7 @@ func (m *Manager) connectServer(ctx context.Context, name string, cfg config.MCP
 	var c *mcpclient.Client
 	var err error
 
-	switch cfg.Transport {
+	switch config.NormalizeMCPTransportType(cfg.Transport) {
 	case "stdio":
 		envSlice := make([]string, 0, len(cfg.Env))
 		for k, v := range cfg.Env {
@@ -224,17 +224,28 @@ func (m *Manager) GetToolsForServers(serverNames []string) map[string][]mcpgo.To
 	defer m.mu.RUnlock()
 
 	result := make(map[string][]mcpgo.Tool)
-	for _, name := range serverNames {
-		conn, ok := m.connections[name]
+	for _, requestedName := range serverNames {
+		actualName := requestedName
+		conn, ok := m.connections[actualName]
+		if !ok {
+			for name, candidate := range m.connections {
+				if strings.EqualFold(name, requestedName) {
+					actualName = name
+					conn = candidate
+					ok = true
+					break
+				}
+			}
+		}
 		if !ok {
 			logger.WarnCF("mcp", "Server not found in GetToolsForServers", map[string]any{
-				"server": name,
+				"server": requestedName,
 			})
 			continue
 		}
 		conn.mu.RLock()
 		if conn.connected {
-			result[name] = conn.Tools
+			result[actualName] = conn.Tools
 		}
 		conn.mu.RUnlock()
 	}
