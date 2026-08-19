@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
@@ -23,6 +24,7 @@ type SessionManager struct {
 	sessions map[string]*Session
 	mu       sync.RWMutex
 	storage  string
+	index    *Index // nil when storage is empty or the index failed to open
 }
 
 func NewSessionManager(storage string) *SessionManager {
@@ -34,9 +36,42 @@ func NewSessionManager(storage string) *SessionManager {
 	if storage != "" {
 		os.MkdirAll(storage, 0o755)
 		sm.loadSessions()
+		sm.initIndex()
 	}
 
 	return sm
+}
+
+// Index returns the FTS5 search index over persisted sessions, or nil when
+// indexing is disabled/unavailable.
+func (sm *SessionManager) Index() *Index {
+	return sm.index
+}
+
+// initIndex opens the search index and backfills sessions whose on-disk
+// content is newer than what the index has. Index failures never block the
+// manager: session persistence keeps working without search.
+func (sm *SessionManager) initIndex() {
+	ix, err := OpenIndex(sm.storage)
+	if err != nil {
+		logger.WarnCF("session", "Session search index unavailable", map[string]any{"error": err.Error()})
+		return
+	}
+	sm.index = ix
+
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	for _, s := range sm.sessions {
+		if !ix.NeedsReindex(s) {
+			continue
+		}
+		if err := ix.IndexSession(s); err != nil {
+			logger.WarnCF("session", "Session backfill into search index failed", map[string]any{
+				"session": s.Key,
+				"error":   err.Error(),
+			})
+		}
+	}
 }
 
 func (sm *SessionManager) GetOrCreate(key string) *Session {
@@ -230,6 +265,17 @@ func (sm *SessionManager) Save(key string) error {
 		return err
 	}
 	cleanup = false
+
+	// Keep the search index in sync. Indexing failures are non-fatal: the
+	// session file on disk is the source of truth.
+	if sm.index != nil {
+		if err := sm.index.IndexSession(&snapshot); err != nil {
+			logger.WarnCF("session", "Session reindex failed", map[string]any{
+				"session": key,
+				"error":   err.Error(),
+			})
+		}
+	}
 	return nil
 }
 

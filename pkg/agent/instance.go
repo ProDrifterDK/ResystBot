@@ -107,6 +107,7 @@ func newAgentInstanceWithMCPManager(
 
 	sessionsDir := filepath.Join(workspace, "sessions")
 	sessionsManager := session.NewSessionManager(sessionsDir)
+	toolsRegistry.Register(tools.NewSessionSearchTool(sessionsManager.Index()))
 
 	contextBuilder := NewContextBuilder(workspace)
 	contextBuilder.SetToolsRegistry(toolsRegistry)
