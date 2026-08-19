@@ -551,6 +551,18 @@ type MemoryConfig struct {
 	PruneScoreThreshold       float64 `json:"prune_score_threshold"       env:"PICOCLAW_PRUNE_SCORE_THRESHOLD"`
 	PruneMinAgeDays           int     `json:"prune_min_age_days"          env:"PICOCLAW_PRUNE_MIN_AGE_DAYS"`
 	ArchivePath               string  `json:"archive_path"                env:"PICOCLAW_ARCHIVE_PATH"`
+
+	// NudgeInterval: every N user turns without a memory tool call, the agent
+	// gets a reminder to save durable facts. 0 = default (10), negative = off.
+	NudgeInterval int `json:"nudge_interval" env:"PICOCLAW_MEMORY_NUDGE_INTERVAL"`
+}
+
+// GetNudgeInterval returns the configured interval, defaulting to 10.
+func (m MemoryConfig) GetNudgeInterval() int {
+	if m.NudgeInterval == 0 {
+		return 10
+	}
+	return m.NudgeInterval
 }
 
 // LearningConfig holds configuration for the learning system.

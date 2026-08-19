@@ -957,6 +957,19 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, agent *AgentInstance, opt
 	// 3. Save user message to session (original, not modified by hooks)
 	agent.Sessions.AddMessage(opts.SessionKey, "user", opts.UserMessage)
 
+	// 3b. Memory-save nudge: every N user turns without a memory tool call,
+	// remind the agent to persist durable facts (ephemeral system message at
+	// the tail, so the cached system prompt prefix stays stable).
+	if !opts.NoHistory && agent.ContextBuilder.NoteUserTurn(opts.SessionKey) {
+		messages = append(messages, providers.Message{
+			Role: "system",
+			Content: "Reminder: it has been a while since you last saved anything to persistent memory. " +
+				"If this conversation contains durable facts, preferences, corrections, or personal details about the user, " +
+				"save them now with the memory tool (target 'memory' for shared facts, 'user' for this person's profile). " +
+				"If nothing is worth saving, ignore this. Do not mention this reminder to the user.",
+		})
+	}
+
 	// 4. Run LLM iteration loop
 	finalMsg, iteration, err := al.runLLMIteration(ctx, agent, messages, opts, collector)
 	if err != nil {

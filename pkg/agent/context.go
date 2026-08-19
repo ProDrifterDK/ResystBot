@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/config"
@@ -35,6 +36,10 @@ type ContextBuilder struct {
 	learningConfig      *config.LearningConfig
 	lastInjectedLessons []learning.LessonRecord
 	lastReceivedAt      string // ISO timestamp of when the current message was received
+
+	nudgeMu             sync.Mutex
+	nudgeInterval       int            // user turns between memory-save reminders; <=0 disables
+	turnsSinceMemoryWrt map[string]int // session key -> user turns since last memory tool call
 }
 
 func getGlobalConfigDir() string {
@@ -123,6 +128,35 @@ func (cb *ContextBuilder) RecordToolCall(toolName string, sessionKey string) {
 	if cb.triggerEngine != nil {
 		cb.triggerEngine.RecordToolCall(toolName, sessionKey)
 	}
+	if toolName == "memory" {
+		cb.nudgeMu.Lock()
+		cb.turnsSinceMemoryWrt[sessionKey] = 0
+		cb.nudgeMu.Unlock()
+	}
+}
+
+// SetMemoryNudgeInterval sets how many user turns pass between memory-save
+// reminders. <=0 disables the nudge.
+func (cb *ContextBuilder) SetMemoryNudgeInterval(n int) {
+	cb.nudgeMu.Lock()
+	defer cb.nudgeMu.Unlock()
+	cb.nudgeInterval = n
+}
+
+// NoteUserTurn records one user turn for the session and reports whether a
+// memory-save reminder is due (every nudgeInterval turns without a memory
+// tool call).
+func (cb *ContextBuilder) NoteUserTurn(sessionKey string) bool {
+	cb.nudgeMu.Lock()
+	defer cb.nudgeMu.Unlock()
+	if cb.nudgeInterval <= 0 || sessionKey == "" {
+		return false
+	}
+	if cb.turnsSinceMemoryWrt == nil {
+		cb.turnsSinceMemoryWrt = map[string]int{}
+	}
+	cb.turnsSinceMemoryWrt[sessionKey]++
+	return cb.turnsSinceMemoryWrt[sessionKey]%cb.nudgeInterval == 0
 }
 
 func (cb *ContextBuilder) getIdentity() string {
