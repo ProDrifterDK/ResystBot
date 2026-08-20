@@ -40,6 +40,7 @@ type AgentLoop struct {
 	registry               *AgentRegistry
 	state                  *state.Manager
 	contextMgr             ContextManager
+	sessionOps             *sessionOperationCoordinator
 	running                atomic.Bool
 	summarizing            sync.Map
 	fallback               *providers.FallbackChain
@@ -102,6 +103,7 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 		registry:         registry,
 		state:            stateManager,
 		contextMgr:       nil,
+		sessionOps:       newSessionOperationCoordinator(),
 		summarizing:      sync.Map{},
 		fallback:         fallbackChain,
 		subagentManagers: subagentManagers,
@@ -717,46 +719,27 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		return response, nil
 	}
 
-	// Route to determine agent and session key
-	route := al.registry.ResolveRoute(routing.RouteInput{
-		Channel:    msg.Channel,
-		AccountID:  msg.Metadata["account_id"],
-		Peer:       extractPeer(msg),
-		ParentPeer: extractParentPeer(msg),
-		GuildID:    msg.Metadata["guild_id"],
-		TeamID:     msg.Metadata["team_id"],
-	})
-
-	agent, ok := al.registry.GetAgent(route.AgentID)
-	if !ok {
-		agent = al.registry.GetDefaultAgent()
+	target, err := al.resolveMessageTarget(msg)
+	if err != nil {
+		return "", err
 	}
 
 	// Inject message received timestamp into prompt for natural time awareness
-	if agent.ContextBuilder != nil {
+	if target.agent.ContextBuilder != nil {
 		if receivedAt, ok := msg.Metadata["received_at"]; ok && receivedAt != "" {
-			agent.ContextBuilder.SetReceivedAt(receivedAt)
+			target.agent.ContextBuilder.SetReceivedAt(receivedAt)
 		}
-	}
-
-	// Use routed session key by default, but honor explicit Telegram session keys.
-	// Telegram daemon/transport/direct integrations set stable keys like "telegram:<chat_id>";
-	// honoring them prevents different Telegram users from collapsing into agent:main:main.
-	// Keep non-Telegram legacy behavior routed unless the key is already agent-scoped.
-	sessionKey := route.SessionKey
-	if msg.SessionKey != "" && (strings.HasPrefix(msg.SessionKey, "agent:") || msg.Channel == "telegram") {
-		sessionKey = msg.SessionKey
 	}
 
 	logger.InfoCF("agent", "Routed message",
 		map[string]any{
-			"agent_id":    agent.ID,
-			"session_key": sessionKey,
-			"matched_by":  route.MatchedBy,
+			"agent_id":    target.agent.ID,
+			"session_key": target.sessionKey,
+			"matched_by":  target.matchedBy,
 		})
 
-	return al.runAgentLoop(ctx, agent, processOptions{
-		SessionKey:      sessionKey,
+	return al.runAgentLoop(ctx, target.agent, processOptions{
+		SessionKey:      target.sessionKey,
 		Channel:         msg.Channel,
 		ChatID:          msg.ChatID,
 		UserMessage:     msg.Content,
@@ -828,6 +811,12 @@ func (al *AgentLoop) processSystemMessage(ctx context.Context, msg bus.InboundMe
 
 // runAgentLoop is the core message processing logic.
 func (al *AgentLoop) runAgentLoop(ctx context.Context, agent *AgentInstance, opts processOptions) (string, error) {
+	release, err := al.sessionOps.acquire(ctx, agent.ID+"\x00"+opts.SessionKey)
+	if err != nil {
+		return "", err
+	}
+	defer release()
+
 	collector := trace.NewTurnTraceCollector(opts.SessionKey, agent.ID, opts.Channel, opts.ChatID, opts.UserMessage)
 	collector.SetInjectedLearningIDs(nil)
 	var iteration int
@@ -1859,6 +1848,12 @@ func formatToolsForLog(toolDefs []providers.ToolDefinition) string {
 func (al *AgentLoop) summarizeSession(agent *AgentInstance, sessionKey string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
+
+	release, err := al.sessionOps.acquire(ctx, agent.ID+"\x00"+sessionKey)
+	if err != nil {
+		return
+	}
+	defer release()
 
 	history := agent.Sessions.GetHistory(sessionKey)
 	summary := agent.Sessions.GetSummary(sessionKey)

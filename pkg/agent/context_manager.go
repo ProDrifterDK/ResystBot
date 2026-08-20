@@ -59,6 +59,45 @@ type IngestRequest struct {
 	Source     string
 }
 
+type ResetMode string
+
+const (
+	ResetModeSoft ResetMode = "soft"
+	ResetModeHard ResetMode = "hard"
+)
+
+func (m ResetMode) Valid() bool {
+	return m == ResetModeSoft || m == ResetModeHard
+}
+
+type ResetRequest struct {
+	SessionKey string
+	Mode       ResetMode
+}
+
+type ResetResult struct {
+	SessionKey      string
+	ClearedMessages int
+	SummaryAction   string
+}
+
+// SessionResetter is an optional context-manager capability. Managers that do
+// not implement it fail closed instead of being bypassed.
+type SessionResetter interface {
+	Reset(ctx context.Context, req *ResetRequest) (*ResetResult, error)
+}
+
+type SessionResetUnsupportedError struct {
+	Manager string
+}
+
+func (e *SessionResetUnsupportedError) Error() string {
+	if e.Manager == "" {
+		return "session reset is unsupported"
+	}
+	return fmt.Sprintf("session reset is unsupported by %s", e.Manager)
+}
+
 // ContextManager is the pluggable interface for context assembly, compaction, and ingestion.
 type ContextManager interface {
 	Assemble(ctx context.Context, req *AssembleRequest) (*AssembleResponse, error)

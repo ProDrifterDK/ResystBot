@@ -3,7 +3,9 @@ package transport
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -20,15 +22,27 @@ type Server struct {
 	msgBus     *bus.MessageBus
 	channel    string
 
-	mu          sync.RWMutex
-	streams     map[string]*Stream
-	chatStreams map[string]string
-	cancelMap   map[string]context.CancelFunc
-	startTime   time.Time
+	mu           sync.RWMutex
+	streams      map[string]*Stream
+	chatStreams  map[string]string
+	runs         map[string]*chatRun
+	resetting    map[string]bool
+	startTime    time.Time
+	resetTimeout time.Duration
+	resetSession func(context.Context, bus.InboundMessage, agent.ResetMode) (*agent.ResetResult, error)
 
 	relayCancel context.CancelFunc
 	relayWG     sync.WaitGroup
 	wg          sync.WaitGroup
+}
+
+type chatRun struct {
+	id          string
+	chatID      string
+	stream      *Stream
+	cancel      context.CancelFunc
+	done        chan struct{}
+	predecessor *chatRun
 }
 
 type Stream struct {
@@ -59,21 +73,34 @@ type cancelInput struct {
 	ChatID string `json:"chat_id"`
 }
 
+type sessionResetInput struct {
+	ChatID string          `json:"chat_id"`
+	Mode   agent.ResetMode `json:"mode"`
+}
+
+const defaultSessionResetTimeout = 30 * time.Second
+
 func NewServer(agentLoop *agent.AgentLoop, msgBus *bus.MessageBus, channel, host string, port int) *Server {
 	s := &Server{
-		agentLoop:   agentLoop,
-		msgBus:      msgBus,
-		channel:     channel,
-		streams:     make(map[string]*Stream),
-		chatStreams: make(map[string]string),
-		cancelMap:   make(map[string]context.CancelFunc),
-		startTime:   time.Now(),
+		agentLoop:    agentLoop,
+		msgBus:       msgBus,
+		channel:      channel,
+		streams:      make(map[string]*Stream),
+		chatStreams:  make(map[string]string),
+		runs:         make(map[string]*chatRun),
+		resetting:    make(map[string]bool),
+		startTime:    time.Now(),
+		resetTimeout: defaultSessionResetTimeout,
+	}
+	if agentLoop != nil {
+		s.resetSession = agentLoop.ResetSession
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/message", s.handleMessage)
 	mux.HandleFunc("/v1/stream/", s.handleStream)
 	mux.HandleFunc("/v1/cancel", s.handleCancel)
+	mux.HandleFunc("/v1/session/reset", s.handleSessionReset)
 	mux.HandleFunc("/v1/status", s.handleStatus)
 
 	s.httpServer = &http.Server{
@@ -161,21 +188,40 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 	if streamID == "" {
 		streamID = fmt.Sprintf("%d", time.Now().UnixNano())
 	}
-
 	stream := &Stream{ID: streamID, ChatID: input.ChatID, Events: make(chan Event, 64), CreatedAt: time.Now()}
-	prevCancel, prevStreamID := s.registerStream(stream)
-	if prevCancel != nil {
-		prevCancel()
-	}
-	if prevStreamID != "" && prevStreamID != streamID {
-		s.removeStream(prevStreamID)
-	}
+	ctx, cancel := context.WithCancel(context.Background())
+	run := &chatRun{id: streamID, chatID: input.ChatID, stream: stream, cancel: cancel, done: make(chan struct{})}
 
-	logger.InfoCF("transport", "Message accepted", map[string]any{"stream_id": streamID, "chat_id": input.ChatID})
-	writeJSON(w, http.StatusAccepted, map[string]string{"stream_id": streamID, "status": "processing"})
+	s.mu.Lock()
+	if s.resetting[input.ChatID] {
+		s.mu.Unlock()
+		cancel()
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"status": "error",
+			"code":   "session_resetting",
+			"error":  "session reset is in progress",
+		})
+		return
+	}
+	run.predecessor = s.runs[input.ChatID]
+	if run.predecessor != nil {
+		run.predecessor.cancel()
+	}
+	if previousID := s.chatStreams[input.ChatID]; previousID != "" {
+		s.removeStreamLocked(previousID)
+	}
+	if existing := s.streams[streamID]; existing != nil {
+		s.removeStreamLocked(streamID)
+	}
+	s.streams[streamID] = stream
+	s.chatStreams[input.ChatID] = streamID
+	s.runs[input.ChatID] = run
+	s.mu.Unlock()
 
 	s.wg.Add(1)
-	go s.processMessage(stream, input)
+	logger.InfoCF("transport", "Message accepted", map[string]any{"stream_id": streamID, "chat_id": input.ChatID})
+	writeJSON(w, http.StatusAccepted, map[string]string{"stream_id": streamID, "status": "processing"})
+	go s.processMessage(ctx, run, input)
 }
 
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
@@ -214,28 +260,28 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		select {
 		case event, ok := <-stream.Events:
 			if !ok {
-				s.removeStream(stream.ID)
+				s.removeStreamIfCurrent(stream)
 				return
 			}
 			if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Name, event.Data); err != nil {
 				logger.WarnCF("transport", "Failed to write SSE event", map[string]any{"stream_id": stream.ID, "error": err.Error()})
-				s.removeStream(stream.ID)
+				s.removeStreamIfCurrent(stream)
 				return
 			}
 			flusher.Flush()
 			if event.Name == "response" || event.Name == "error" {
-				s.removeStream(stream.ID)
+				s.removeStreamIfCurrent(stream)
 				return
 			}
 		case <-pingTicker.C:
 			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
 				logger.WarnCF("transport", "Failed to write SSE ping", map[string]any{"stream_id": stream.ID, "error": err.Error()})
-				s.removeStream(stream.ID)
+				s.removeStreamIfCurrent(stream)
 				return
 			}
 			flusher.Flush()
 		case <-r.Context().Done():
-			s.removeStream(stream.ID)
+			s.removeStreamIfCurrent(stream)
 			return
 		}
 	}
@@ -262,9 +308,9 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	streamID, stream, cancel := s.lookupChatState(input.ChatID)
-	if cancel != nil {
-		cancel()
+	_, stream, run := s.lookupChatState(input.ChatID)
+	if run != nil {
+		run.cancel()
 	}
 	if stream != nil {
 		payload, err := json.Marshal(map[string]string{"chat_id": input.ChatID, "text": "cancelled"})
@@ -274,12 +320,108 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 			s.sendStreamEvent(stream, Event{Name: "error", Data: payload})
 		}
 	}
-	if streamID != "" {
-		s.removeStream(streamID)
+	if stream != nil {
+		s.removeStreamIfCurrent(stream)
 	}
 
 	logger.InfoCF("transport", "Cancelled chat", map[string]any{"chat_id": input.ChatID})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled"})
+}
+
+func (s *Server) handleSessionReset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeResetError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+		return
+	}
+	if s.resetSession == nil {
+		writeResetError(w, http.StatusServiceUnavailable, "agent_loop_unavailable", "agent loop is unavailable")
+		return
+	}
+	defer r.Body.Close()
+
+	var input sessionResetInput
+	if err := decodeStrictJSON(r, &input); err != nil {
+		writeResetError(w, http.StatusBadRequest, "invalid_request", "invalid reset request")
+		return
+	}
+	input.ChatID = strings.TrimSpace(input.ChatID)
+	if input.ChatID == "" || !input.Mode.Valid() {
+		writeResetError(w, http.StatusBadRequest, "invalid_request", "chat_id and mode soft|hard are required")
+		return
+	}
+
+	s.mu.Lock()
+	if s.resetting[input.ChatID] {
+		s.mu.Unlock()
+		writeResetError(w, http.StatusConflict, "session_busy", "session reset is already in progress")
+		return
+	}
+	s.resetting[input.ChatID] = true
+	run := s.runs[input.ChatID]
+	cancelledInFlight := false
+	if run != nil {
+		select {
+		case <-run.done:
+		default:
+			cancelledInFlight = true
+			run.cancel()
+		}
+	}
+	if streamID := s.chatStreams[input.ChatID]; streamID != "" {
+		s.removeStreamLocked(streamID)
+	}
+	s.mu.Unlock()
+	defer s.finishReset(input.ChatID)
+
+	ctx, cancel := context.WithTimeout(r.Context(), s.resetTimeout)
+	defer cancel()
+	if run != nil {
+		select {
+		case <-run.done:
+		case <-ctx.Done():
+			writeResetError(w, http.StatusConflict, "session_busy", "active session work did not stop before the reset deadline")
+			return
+		}
+	}
+
+	result, err := s.resetSession(ctx, s.inboundMessage(messageInput{ChatID: input.ChatID}), input.Mode)
+	if err != nil {
+		logger.ErrorCF("transport", "Session reset failed", map[string]any{
+			"chat_id": input.ChatID,
+			"mode":    input.Mode,
+			"error":   err.Error(),
+		})
+		var unsupported *agent.SessionResetUnsupportedError
+		switch {
+		case errors.As(err, &unsupported):
+			writeResetError(w, http.StatusNotImplemented, "session_reset_unsupported", "session reset is unsupported")
+		case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+			writeResetError(w, http.StatusConflict, "session_busy", "session work did not quiesce before the reset deadline")
+		default:
+			writeResetError(w, http.StatusInternalServerError, "session_reset_failed", "session reset failed")
+		}
+		return
+	}
+
+	expectedAction := "preserved"
+	if input.Mode == agent.ResetModeHard {
+		expectedAction = "cleared"
+	}
+	if result == nil || result.SessionKey == "" || result.ClearedMessages < 0 || result.SummaryAction != expectedAction {
+		logger.ErrorCF("transport", "Session reset returned an invalid result", map[string]any{"chat_id": input.ChatID, "mode": input.Mode})
+		writeResetError(w, http.StatusInternalServerError, "session_reset_failed", "session reset failed")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":              "reset",
+		"chat_id":             input.ChatID,
+		"session_key":         result.SessionKey,
+		"mode":                input.Mode,
+		"cleared_messages":    result.ClearedMessages,
+		"summary_action":      result.SummaryAction,
+		"cancelled_in_flight": cancelledInFlight,
+	})
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -289,8 +431,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.mu.RLock()
-	activeChats := make([]string, 0, len(s.chatStreams))
-	for chatID := range s.chatStreams {
+	activeChats := make([]string, 0, len(s.runs))
+	for chatID := range s.runs {
 		activeChats = append(activeChats, chatID)
 	}
 	activeStreams := make([]string, 0, len(s.streams))
@@ -306,12 +448,50 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) processMessage(stream *Stream, input messageInput) {
+func (s *Server) processMessage(ctx context.Context, run *chatRun, input messageInput) {
 	defer s.wg.Done()
-	defer s.removeCancel(input.ChatID)
-	defer s.removeStream(stream.ID)
+	defer s.finishRun(run)
 
-	msg := bus.InboundMessage{
+	if run.predecessor != nil {
+		select {
+		case <-run.predecessor.done:
+		case <-ctx.Done():
+			return
+		}
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	if s.agentLoop == nil {
+		s.sendJSONEvent(run.stream, "error", map[string]string{"chat_id": input.ChatID, "text": "agent loop unavailable"})
+		return
+	}
+
+	response, err := s.agentLoop.ProcessMessage(ctx, s.inboundMessage(input))
+	if ctx.Err() == context.Canceled {
+		return
+	}
+	if err != nil {
+		logger.ErrorCF("transport", "Process error", map[string]any{"chat_id": input.ChatID, "error": err.Error()})
+		s.sendJSONEvent(run.stream, "error", map[string]string{"chat_id": input.ChatID, "text": err.Error()})
+		return
+	}
+
+	if response != "" {
+		if al := s.agentLoop; al.LastUsage != nil {
+			response += fmt.Sprintf("\n\n`in:%d out:%d ctx:%d`", al.LastUsage.PromptTokens, al.LastUsage.CompletionTokens, al.LastContextEstimate)
+		}
+		s.sendJSONEvent(run.stream, "response", map[string]string{"chat_id": input.ChatID, "text": response})
+	}
+
+	s.agentLoop.WaitForSubagents()
+	drainCtx, drainCancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer drainCancel()
+	s.agentLoop.DrainInbound(drainCtx, s.channel, input.ChatID)
+}
+
+func (s *Server) inboundMessage(input messageInput) bus.InboundMessage {
+	return bus.InboundMessage{
 		Channel:    s.channel,
 		SenderID:   input.Username,
 		ChatID:     input.ChatID,
@@ -326,32 +506,6 @@ func (s *Server) processMessage(stream *Stream, input messageInput) {
 			"received_at": input.ReceivedAt,
 		},
 	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	s.registerCancel(input.ChatID, cancel)
-
-	response, err := s.agentLoop.ProcessMessage(ctx, msg)
-	if ctx.Err() == context.Canceled {
-		return
-	}
-	if err != nil {
-		logger.ErrorCF("transport", "Process error", map[string]any{"chat_id": input.ChatID, "error": err.Error()})
-		s.sendJSONEvent(stream, "error", map[string]string{"chat_id": input.ChatID, "text": err.Error()})
-		return
-	}
-
-	if response != "" {
-		if al := s.agentLoop; al.LastUsage != nil {
-			response += fmt.Sprintf("\n\n`in:%d out:%d ctx:%d`", al.LastUsage.PromptTokens, al.LastUsage.CompletionTokens, al.LastContextEstimate)
-		}
-		s.sendJSONEvent(stream, "response", map[string]string{"chat_id": input.ChatID, "text": response})
-	}
-
-	s.agentLoop.WaitForSubagents()
-	drainCtx, drainCancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer drainCancel()
-	s.agentLoop.DrainInbound(drainCtx, s.channel, input.ChatID)
 }
 
 func (s *Server) runOutboundRelay(ctx context.Context) {
@@ -386,38 +540,22 @@ func (s *Server) runOutboundRelay(ctx context.Context) {
 	}
 }
 
-func (s *Server) registerStream(stream *Stream) (context.CancelFunc, string) {
+func (s *Server) finishRun(run *chatRun) {
+	run.cancel()
+	close(run.done)
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	var prevCancel context.CancelFunc
-	var prevStreamID string
-	if existingID, ok := s.chatStreams[stream.ChatID]; ok {
-		prevStreamID = existingID
-		prevCancel = s.cancelMap[stream.ChatID]
+	if s.runs[run.chatID] == run {
+		delete(s.runs, run.chatID)
 	}
-	if existing, ok := s.streams[stream.ID]; ok {
-		delete(s.chatStreams, existing.ChatID)
-		close(existing.Events)
-	}
-	s.streams[stream.ID] = stream
-	s.chatStreams[stream.ChatID] = stream.ID
-	return prevCancel, prevStreamID
+	s.removeStreamIfCurrentLocked(run.stream)
 }
 
-func (s *Server) registerCancel(chatID string, cancel context.CancelFunc) {
+func (s *Server) finishReset(chatID string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if prev, ok := s.cancelMap[chatID]; ok {
-		prev()
-	}
-	s.cancelMap[chatID] = cancel
-}
-
-func (s *Server) removeCancel(chatID string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.cancelMap, chatID)
+	delete(s.resetting, chatID)
+	s.mu.Unlock()
 }
 
 func (s *Server) getStream(streamID string) *Stream {
@@ -432,17 +570,36 @@ func (s *Server) getStreamIDByChat(chatID string) string {
 	return s.chatStreams[chatID]
 }
 
-func (s *Server) lookupChatState(chatID string) (string, *Stream, context.CancelFunc) {
+func (s *Server) lookupChatState(chatID string) (string, *Stream, *chatRun) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	streamID := s.chatStreams[chatID]
-	return streamID, s.streams[streamID], s.cancelMap[chatID]
+	return streamID, s.streams[streamID], s.runs[chatID]
 }
 
+// removeStream removes the current entry by ID for deliberate control operations
+// such as shutdown. Lifecycle cleanup with a retained *Stream must use
+// removeStreamIfCurrent so reused client IDs cannot remove a successor.
 func (s *Server) removeStream(streamID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.removeStreamLocked(streamID)
+}
 
+func (s *Server) removeStreamIfCurrent(stream *Stream) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.removeStreamIfCurrentLocked(stream)
+}
+
+func (s *Server) removeStreamIfCurrentLocked(stream *Stream) {
+	if stream == nil || s.streams[stream.ID] != stream {
+		return
+	}
+	s.removeStreamLocked(stream.ID)
+}
+
+func (s *Server) removeStreamLocked(streamID string) {
 	stream, ok := s.streams[streamID]
 	if !ok {
 		return
@@ -457,9 +614,9 @@ func (s *Server) removeStream(streamID string) {
 func (s *Server) snapshotCancels() []context.CancelFunc {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	cancels := make([]context.CancelFunc, 0, len(s.cancelMap))
-	for _, cancel := range s.cancelMap {
-		cancels = append(cancels, cancel)
+	cancels := make([]context.CancelFunc, 0, len(s.runs))
+	for _, run := range s.runs {
+		cancels = append(cancels, run.cancel)
 	}
 	return cancels
 }
@@ -495,6 +652,29 @@ func (s *Server) sendStreamEvent(stream *Stream, event Event) {
 	default:
 		logger.WarnCF("transport", "Stream buffer full", map[string]any{"stream_id": stream.ID, "event": event.Name})
 	}
+}
+
+func decodeStrictJSON(r *http.Request, dst any) error {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dst); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return fmt.Errorf("multiple JSON values")
+		}
+		return err
+	}
+	return nil
+}
+
+func writeResetError(w http.ResponseWriter, status int, code, message string) {
+	writeJSON(w, status, map[string]string{
+		"status": "error",
+		"code":   code,
+		"error":  message,
+	})
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

@@ -79,13 +79,31 @@ func (l *legacyContextManager) Ingest(ctx context.Context, req *IngestRequest) e
 	return nil
 }
 
-func (l *legacyContextManager) Clear(ctx context.Context, sessionKey string) error {
+func (l *legacyContextManager) Reset(ctx context.Context, req *ResetRequest) (*ResetResult, error) {
 	agent, err := legacyContextAgentFromContext(ctx)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	if req == nil || !req.Mode.Valid() {
+		return nil, fmt.Errorf("invalid session reset mode")
 	}
 
-	agent.Sessions.TruncateHistory(sessionKey, 0)
-	agent.Sessions.SetSummary(sessionKey, "")
-	return agent.Sessions.Save(sessionKey)
+	cleared, err := agent.Sessions.Reset(req.SessionKey, req.Mode == ResetModeHard)
+	if err != nil {
+		return nil, err
+	}
+	action := "preserved"
+	if req.Mode == ResetModeHard {
+		action = "cleared"
+	}
+	return &ResetResult{
+		SessionKey:      req.SessionKey,
+		ClearedMessages: cleared,
+		SummaryAction:   action,
+	}, nil
+}
+
+func (l *legacyContextManager) Clear(ctx context.Context, sessionKey string) error {
+	_, err := l.Reset(ctx, &ResetRequest{SessionKey: sessionKey, Mode: ResetModeHard})
+	return err
 }

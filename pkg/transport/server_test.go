@@ -190,7 +190,10 @@ func TestHandleCancel_ValidRequest(t *testing.T) {
 	s.mu.Lock()
 	s.streams[stream.ID] = stream
 	s.chatStreams[stream.ChatID] = stream.ID
-	s.cancelMap[stream.ChatID] = func() { cancelled = true }
+	s.runs[stream.ChatID] = &chatRun{
+		id: stream.ID, chatID: stream.ChatID, stream: stream,
+		cancel: func() { cancelled = true }, done: make(chan struct{}),
+	}
 	s.mu.Unlock()
 
 	resp := postJSON(t, ts.Client(), ts.URL+"/v1/cancel", map[string]any{
@@ -228,6 +231,42 @@ func TestHandleCancel_MissingChatID(t *testing.T) {
 	body := decodeJSONMap(t, resp)
 	if body["error"] != "chat_id is required" {
 		t.Fatalf("unexpected error: %v", body["error"])
+	}
+}
+
+func TestHandleSessionReset_PublicSeam(t *testing.T) {
+	s, ts := newTestServer(t, true)
+	s.channel = "telegram"
+
+	messageResp := postJSON(t, ts.Client(), ts.URL+"/v1/message", map[string]any{
+		"chat_id":  "chat-reset",
+		"text":     "hello",
+		"user":     "user",
+		"username": "username",
+	})
+	if messageResp.StatusCode != http.StatusAccepted {
+		t.Fatalf("message status = %d, want %d", messageResp.StatusCode, http.StatusAccepted)
+	}
+	messageResp.Body.Close()
+	s.wg.Wait()
+
+	resp := postJSON(t, ts.Client(), ts.URL+"/v1/session/reset", map[string]any{
+		"chat_id": "chat-reset",
+		"mode":    "soft",
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("reset status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	body := decodeJSONMap(t, resp)
+	if body["status"] != "reset" {
+		t.Fatalf("status = %v, want reset", body["status"])
+	}
+	if body["session_key"] != "telegram:chat-reset" {
+		t.Fatalf("session_key = %v, want telegram:chat-reset", body["session_key"])
+	}
+	if body["cleared_messages"] != float64(2) {
+		t.Fatalf("cleared_messages = %v, want 2", body["cleared_messages"])
 	}
 }
 

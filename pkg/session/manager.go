@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -194,16 +195,6 @@ func (sm *SessionManager) Save(key string) error {
 		return nil
 	}
 
-	filename := sanitizeFilename(key)
-
-	// filepath.IsLocal rejects empty names, "..", absolute paths, and
-	// OS-reserved device names (NUL, COM1 … on Windows).
-	// The extra checks reject "." and any directory separators so that
-	// the session file is always written directly inside sm.storage.
-	if filename == "." || !filepath.IsLocal(filename) || strings.ContainsAny(filename, `/\`) {
-		return os.ErrInvalid
-	}
-
 	// Snapshot under read lock, then perform slow file I/O after unlock.
 	sm.mu.RLock()
 	stored, ok := sm.sessions[key]
@@ -211,20 +202,83 @@ func (sm *SessionManager) Save(key string) error {
 		sm.mu.RUnlock()
 		return nil
 	}
-
-	snapshot := Session{
-		Key:     stored.Key,
-		Summary: stored.Summary,
-		Created: stored.Created,
-		Updated: stored.Updated,
-	}
-	if len(stored.Messages) > 0 {
-		snapshot.Messages = make([]providers.Message, len(stored.Messages))
-		copy(snapshot.Messages, stored.Messages)
-	} else {
-		snapshot.Messages = []providers.Message{}
-	}
+	snapshot := cloneSession(stored)
 	sm.mu.RUnlock()
+
+	if err := sm.persistSnapshot(&snapshot); err != nil {
+		return err
+	}
+
+	// Keep the search index in sync. Indexing failures are non-fatal: the
+	// session file on disk is the source of truth.
+	if sm.index != nil {
+		if err := sm.index.IndexSession(&snapshot); err != nil {
+			logger.WarnCF("session", "Session reindex failed", map[string]any{
+				"session": key,
+				"error":   err.Error(),
+			})
+		}
+	}
+	return nil
+}
+
+// Reset atomically clears a session's messages and optionally its summary.
+// Persistence succeeds before the in-memory session changes. An active FTS
+// index is reconciled strictly before success is reported.
+func (sm *SessionManager) Reset(key string, clearSummary bool) (int, error) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	now := time.Now()
+	stored, ok := sm.sessions[key]
+	if !ok {
+		stored = &Session{Key: key, Messages: []providers.Message{}, Created: now, Updated: now}
+	}
+
+	cleared := len(stored.Messages)
+	replacement := cloneSession(stored)
+	replacement.Messages = []providers.Message{}
+	if clearSummary {
+		replacement.Summary = ""
+	}
+	replacement.Updated = now
+
+	if err := sm.persistSnapshot(&replacement); err != nil {
+		return 0, err
+	}
+	sm.sessions[key] = &replacement
+
+	if sm.index != nil {
+		if err := sm.index.IndexSession(&replacement); err != nil {
+			return 0, fmt.Errorf("reconcile session index: %w", err)
+		}
+	}
+	return cleared, nil
+}
+
+func cloneSession(stored *Session) Session {
+	snapshot := Session{
+		Key:      stored.Key,
+		Summary:  stored.Summary,
+		Created:  stored.Created,
+		Updated:  stored.Updated,
+		Messages: make([]providers.Message, len(stored.Messages)),
+	}
+	copy(snapshot.Messages, stored.Messages)
+	return snapshot
+}
+
+func (sm *SessionManager) persistSnapshot(snapshot *Session) error {
+	if sm.storage == "" {
+		return nil
+	}
+
+	filename := sanitizeFilename(snapshot.Key)
+	// filepath.IsLocal rejects empty names, "..", absolute paths, and
+	// OS-reserved device names (NUL, COM1 … on Windows).
+	if filename == "." || !filepath.IsLocal(filename) || strings.ContainsAny(filename, `/\`) {
+		return os.ErrInvalid
+	}
 
 	data, err := json.MarshalIndent(snapshot, "", "  ")
 	if err != nil {
@@ -260,22 +314,10 @@ func (sm *SessionManager) Save(key string) error {
 	if err := tmpFile.Close(); err != nil {
 		return err
 	}
-
 	if err := os.Rename(tmpPath, sessionPath); err != nil {
 		return err
 	}
 	cleanup = false
-
-	// Keep the search index in sync. Indexing failures are non-fatal: the
-	// session file on disk is the source of truth.
-	if sm.index != nil {
-		if err := sm.index.IndexSession(&snapshot); err != nil {
-			logger.WarnCF("session", "Session reindex failed", map[string]any{
-				"session": key,
-				"error":   err.Error(),
-			})
-		}
-	}
 	return nil
 }
 
