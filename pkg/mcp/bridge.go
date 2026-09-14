@@ -48,6 +48,14 @@ func (b *MCPToolBridge) Description() string {
 	return fmt.Sprintf("[MCP:%s] %s", b.serverName, desc)
 }
 
+// Parameters returns the tool's input schema for the provider payload and for local
+// argument validation.
+//
+// It must stay a faithful projection of the schema the MCP server declared. The schema is
+// carried as a JSON Schema object, so dropping a field silently corrupts it: $defs holds the
+// definitions that properties reference with $ref, and additionalProperties tells the
+// validator whether unknown argument keys are allowed. Rebuild this field by field only
+// against the full set of fields on mcpgo.ToolInputSchema.
 func (b *MCPToolBridge) Parameters() map[string]any {
 	schema := make(map[string]any)
 
@@ -63,6 +71,19 @@ func (b *MCPToolBridge) Parameters() map[string]any {
 
 	if len(b.mcpTool.InputSchema.Required) > 0 {
 		schema["required"] = b.mcpTool.InputSchema.Required
+	}
+
+	// Dropping $defs left every #/$defs/... reference dangling. Lenient providers ignore
+	// unresolvable refs; strict consumers reject the whole tool list, so the agent loop
+	// failed on its first iteration with a JSON schema error rather than a tool error.
+	if len(b.mcpTool.InputSchema.Defs) > 0 {
+		schema["$defs"] = b.mcpTool.InputSchema.Defs
+	}
+
+	// Omitting additionalProperties made validateToolArgs fall back to deny-by-default,
+	// rejecting argument keys every MCP server explicitly allows.
+	if b.mcpTool.InputSchema.AdditionalProperties != nil {
+		schema["additionalProperties"] = b.mcpTool.InputSchema.AdditionalProperties
 	}
 
 	return schema

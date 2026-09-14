@@ -1,6 +1,9 @@
 package mcp
 
 import (
+	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -148,4 +151,129 @@ func TestBridgeToolsEmpty(t *testing.T) {
 	if len(result) != 0 {
 		t.Errorf("BridgeTools with empty manager returned %d tools, want 0", len(result))
 	}
+}
+
+// TestMCPToolBridgeParametersResolvesRefs guards the MCP -> LLM tool payload boundary.
+//
+// Real failure this catches: tools whose schema uses $ref/$defs (several MCP servers do,
+// e.g. cookie and file-upload params) previously came out of Parameters() with the $ref
+// intact but the definitions gone, because the schema was rebuilt field by field and $defs
+// was never copied. Lenient providers ignore it; strict consumers reject the entire tool
+// list, so the agent turn dies before its first iteration. The invariant asserted here is
+// the JSON Schema resolution rule itself, not a copy of the implementation: every in-document
+// $ref in the emitted schema must resolve inside that same schema.
+func TestMCPToolBridgeParametersResolvesRefs(t *testing.T) {
+	mcpTool := mcpgo.Tool{
+		Name: "browser_set_cookies",
+		InputSchema: mcpgo.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"cookies": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"$ref": "#/$defs/SetCookieParam"},
+				},
+			},
+			Defs: map[string]any{
+				"SetCookieParam": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"name":  map[string]any{"type": "string"},
+						"value": map[string]any{"type": "string"},
+					},
+					"required": []string{"name", "value"},
+				},
+			},
+		},
+	}
+	bridge := NewMCPToolBridge("playwright", mcpTool, &Manager{connections: make(map[string]*ServerConnection)}, time.Second*30)
+
+	// Serialize the way the provider payload does: the failure is a wire-format failure.
+	raw, err := json.Marshal(bridge.Parameters())
+	if err != nil {
+		t.Fatalf("Parameters() is not JSON-serializable: %v", err)
+	}
+	var wire any
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatalf("Parameters() round-trip failed: %v", err)
+	}
+
+	found, err := checkRefsResolve(wire)
+	if err != nil {
+		t.Errorf("emitted schema has a dangling $ref, strict consumers reject the tool list: %v", err)
+	}
+	if found == 0 {
+		t.Fatal("emitted schema carried no $ref, so this guard exercised nothing")
+	}
+}
+
+// TestMCPToolBridgeParametersPreservesAdditionalProperties covers the sibling field that the
+// same field-by-field rebuild dropped. It matters locally, not only on the wire: validateToolArgs
+// reads additionalProperties to decide whether unknown argument keys are allowed, so losing it
+// silently imposed deny-by-default on every MCP tool.
+func TestMCPToolBridgeParametersPreservesAdditionalProperties(t *testing.T) {
+	mcpTool := mcpgo.Tool{
+		Name: "search",
+		InputSchema: mcpgo.ToolInputSchema{
+			Type:                 "object",
+			Properties:           map[string]any{"q": map[string]any{"type": "string"}},
+			AdditionalProperties: true,
+		},
+	}
+	bridge := NewMCPToolBridge("scrapling", mcpTool, &Manager{connections: make(map[string]*ServerConnection)}, time.Second*30)
+
+	got, ok := bridge.Parameters()["additionalProperties"]
+	if !ok {
+		t.Fatal("additionalProperties dropped from the tool schema; validateToolArgs then denies unknown args by default")
+	}
+	if allowed, isBool := got.(bool); !isBool || !allowed {
+		t.Errorf("additionalProperties = %#v, want true", got)
+	}
+}
+
+// checkRefsResolve walks a decoded schema and fails on any in-document $ref that does not
+// resolve within that schema. External and relative refs are out of scope by design.
+func checkRefsResolve(schema any) (int, error) {
+	var found int
+	var walk func(node any) error
+	walk = func(node any) error {
+		switch v := node.(type) {
+		case map[string]any:
+			if ref, ok := v["$ref"].(string); ok && strings.HasPrefix(ref, "#/") {
+				found++
+				if _, err := resolveJSONPointer(schema, ref); err != nil {
+					return fmt.Errorf("$ref %q: %w", ref, err)
+				}
+			}
+			for _, child := range v {
+				if err := walk(child); err != nil {
+					return err
+				}
+			}
+		case []any:
+			for _, child := range v {
+				if err := walk(child); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	return found, walk(schema)
+}
+
+// resolveJSONPointer resolves a "#/a/b" JSON Pointer against a decoded document.
+func resolveJSONPointer(root any, ref string) (any, error) {
+	cur := root
+	for _, seg := range strings.Split(strings.TrimPrefix(ref, "#/"), "/") {
+		seg = strings.ReplaceAll(strings.ReplaceAll(seg, "~1", "/"), "~0", "~")
+		obj, ok := cur.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("segment %q: parent is %T, not an object", seg, cur)
+		}
+		cur, ok = obj[seg]
+		if !ok {
+			return nil, fmt.Errorf("segment %q not present", seg)
+		}
+	}
+	return cur, nil
 }
