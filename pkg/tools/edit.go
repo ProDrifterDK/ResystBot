@@ -70,10 +70,11 @@ func (t *EditFileTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 		return ErrorResult("new_text is required")
 	}
 
-	if err := editFile(t.fs, path, oldText, newText); err != nil {
+	beforeContent, afterContent, err := editFile(t.fs, path, oldText, newText)
+	if err != nil {
 		return ErrorResult(err.Error())
 	}
-	return SilentResult(fmt.Sprintf("File edited: %s", path))
+	return DiffResult(path, beforeContent, afterContent)
 }
 
 type AppendFileTool struct {
@@ -133,19 +134,24 @@ func (t *AppendFileTool) Execute(ctx context.Context, args map[string]any) *Tool
 }
 
 // editFile reads the file via sysFs, performs the replacement, and writes back.
+// It returns the before/after contents so callers can render a diff.
 // It uses a fileSystem interface, allowing the same logic for both restricted and unrestricted modes.
-func editFile(sysFs fileSystem, path, oldText, newText string) error {
+func editFile(sysFs fileSystem, path, oldText, newText string) ([]byte, []byte, error) {
 	content, err := sysFs.ReadFile(path)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 
 	newContent, err := replaceEditContent(content, oldText, newText)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 
-	return sysFs.WriteFile(path, newContent)
+	if err := sysFs.WriteFile(path, newContent); err != nil {
+		return nil, nil, err
+	}
+
+	return content, newContent, nil
 }
 
 // appendFile reads the existing content (if any) via sysFs, appends new content, and writes back.

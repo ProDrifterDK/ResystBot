@@ -31,14 +31,17 @@ func TestEditTool_EditFile_Success(t *testing.T) {
 		t.Errorf("Expected success, got IsError=true: %s", result.ForLLM)
 	}
 
-	// Should return SilentResult
-	if !result.Silent {
-		t.Errorf("Expected Silent=true for EditFile, got false")
+	// Should return a diff result (port of upstream 4a81f0e7)
+	if result.Silent {
+		t.Errorf("Expected Silent=false for EditFile diff result")
 	}
 
-	// ForUser should be empty (silent result)
-	if result.ForUser != "" {
-		t.Errorf("Expected ForUser to be empty for SilentResult, got: %s", result.ForUser)
+	// ForUser should contain the unified diff
+	if !strings.Contains(result.ForUser, "```diff") {
+		t.Errorf("Expected ForUser to contain a unified diff, got: %s", result.ForUser)
+	}
+	if !strings.Contains(result.ForUser, "+Hello Universe") {
+		t.Errorf("Expected diff to show the added line, got: %s", result.ForUser)
 	}
 
 	// Verify file was actually edited
@@ -412,7 +415,8 @@ func TestEditFileTool_Restricted_InPlaceEdit(t *testing.T) {
 
 	result := tool.Execute(ctx, args)
 	assert.False(t, result.IsError, "Expected success, got: %s", result.ForLLM)
-	assert.True(t, result.Silent)
+	assert.False(t, result.Silent, "Expected a diff result, not a silent one")
+	assert.Contains(t, result.ForUser, "```diff")
 
 	data, err := os.ReadFile(filepath.Join(workspace, testFile))
 	assert.NoError(t, err)
