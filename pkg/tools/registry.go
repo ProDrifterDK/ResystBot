@@ -55,6 +55,18 @@ func (r *ToolRegistry) Execute(ctx context.Context, name string, args map[string
 	return r.ExecuteWithContext(ctx, name, args, "", "", nil)
 }
 
+// IsToolSequential reports whether the named tool must be executed sequentially
+// with respect to other tool calls in the same iteration (see SequentialTool).
+// Unknown tools are treated as concurrency-safe; the executor returns a
+// "tool not found" error result for them anyway.
+func (r *ToolRegistry) IsToolSequential(name string) bool {
+	tool, ok := r.Get(name)
+	if !ok {
+		return false
+	}
+	return IsSequential(tool)
+}
+
 // ExecuteWithContext executes a tool with channel/chatID context and optional async callback.
 // If the tool implements AsyncTool and a non-nil callback is provided,
 // the callback will be set on the tool before execution.

@@ -31,6 +31,10 @@ func (t *SpawnTool) Name() string {
 	return "spawn"
 }
 
+// IsSequential implements SequentialTool: spawn is an async tool whose callback
+// and origin context live on the shared receiver, so concurrent calls race.
+func (t *SpawnTool) IsSequential() bool { return true }
+
 func (t *SpawnTool) Description() string {
 	return "Spawn a subagent to handle a task in the background. Use this for complex or time-consuming tasks that can run independently. The subagent will complete the task and report back when done."
 }

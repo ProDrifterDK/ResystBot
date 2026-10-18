@@ -69,6 +69,35 @@ type AsyncTool interface {
 	SetCallback(cb AsyncCallback)
 }
 
+// SequentialTool is an optional interface that tools implement to opt out of
+// parallel execution within a single LLM iteration.
+//
+// The agent loop executes the tool calls of one LLM turn concurrently when
+// every requested tool is concurrency-safe. Tools that mutate shared state —
+// file writers, interactive sessions, tools that keep per-call context on the
+// receiver, or async tools whose callback is a shared field — must implement
+// this interface and return true. When at least one such tool is present the
+// whole batch falls back to sequential execution, preserving the pre-parallel
+// behaviour and avoiding data races.
+//
+// Tools that are pure/read-only (filesystem reads, web fetches, memory
+// searches, ...) should NOT implement it, so they stay parallelisable.
+type SequentialTool interface {
+	Tool
+	// IsSequential reports whether the tool must run sequentially with respect
+	// to the other tool calls in the same iteration.
+	IsSequential() bool
+}
+
+// IsSequential reports whether t must be executed sequentially. Tools that do
+// not implement SequentialTool are treated as concurrency-safe.
+func IsSequential(t Tool) bool {
+	if st, ok := t.(SequentialTool); ok {
+		return st.IsSequential()
+	}
+	return false
+}
+
 func ToolToSchema(tool Tool) map[string]any {
 	return map[string]any{
 		"type": "function",

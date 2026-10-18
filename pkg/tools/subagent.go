@@ -401,6 +401,11 @@ func (t *SubagentTool) Name() string {
 	return "subagent"
 }
 
+// IsSequential implements SequentialTool: subagent is an async tool whose
+// callback and origin context live on the shared receiver, so concurrent calls
+// race.
+func (t *SubagentTool) IsSequential() bool { return true }
+
 func (t *SubagentTool) Description() string {
 	return "Execute a subagent task synchronously and return the result. Use this for delegating specific tasks to an independent agent instance. Returns execution summary to user and full details to LLM."
 }

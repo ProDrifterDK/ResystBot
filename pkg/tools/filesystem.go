@@ -156,6 +156,10 @@ func (t *WriteFileTool) Name() string {
 	return "write_file"
 }
 
+// IsSequential implements SequentialTool: write_file mutates a file and must
+// not race with other tool calls in the same iteration.
+func (t *WriteFileTool) IsSequential() bool { return true }
+
 func (t *WriteFileTool) Description() string {
 	return "Write content to a file, replacing any existing content. If the file already exists you must set overwrite=true, which replaces the ENTIRE file. To add to or change part of an existing file without losing its current contents, use append_file or edit_file instead."
 }

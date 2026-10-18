@@ -35,6 +35,10 @@ func (t *MemoryTool) SetContext(channel, chatID string) {
 
 func (t *MemoryTool) Name() string { return "memory" }
 
+// IsSequential implements SequentialTool: memory keeps per-call channel/chat
+// context on the receiver and mutates the memory file.
+func (t *MemoryTool) IsSequential() bool { return true }
+
 func (t *MemoryTool) Description() string {
 	return "Save durable facts to persistent memory that survives across sessions. " +
 		"target 'memory' (default) is the shared MEMORY.md: general facts, preferences, corrections, lessons. " +

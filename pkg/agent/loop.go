@@ -1414,8 +1414,27 @@ func (al *AgentLoop) runLLMIteration(
 		// Save assistant message with tool calls to session
 		agent.Sessions.AddFullMessage(opts.SessionKey, assistantMsg)
 
-		// Execute tool calls
-		for _, tc := range normalizedToolCalls {
+		// Execute tool calls.
+		//
+		// When every requested tool is concurrency-safe they run in parallel and
+		// their results are collected by index; the post-processing (trace,
+		// user-facing sends, session writes) then runs in the original order so
+		// the conversation stays deterministic. If any tool in the batch is not
+		// concurrency-safe (file writers, interactive sessions, contextual/async
+		// tools) the whole batch falls back to sequential execution to avoid
+		// data races — see tools.SequentialTool.
+		type indexedToolResult struct {
+			tc       providers.ToolCall
+			result   *tools.ToolResult
+			duration time.Duration
+		}
+
+		results := make([]indexedToolResult, len(normalizedToolCalls))
+		for i, tc := range normalizedToolCalls {
+			results[i].tc = tc
+		}
+
+		runTool := func(idx int, tc providers.ToolCall) {
 			argsPreview := tools.FormatToolCallPreview(tc)
 			logger.InfoCF("agent", fmt.Sprintf("Tool call: %s", argsPreview),
 				map[string]any{
@@ -1449,6 +1468,54 @@ func (al *AgentLoop) runLLMIteration(
 				opts.ChatID,
 				asyncCallback,
 			)
+			results[idx].result = toolResult
+			results[idx].duration = time.Since(toolStart)
+		}
+
+		parallel := len(normalizedToolCalls) > 1
+		if parallel {
+			for _, tc := range normalizedToolCalls {
+				if agent.Tools.IsToolSequential(tc.Name) {
+					parallel = false
+					break
+				}
+			}
+		}
+
+		if parallel {
+			logger.DebugCF("agent", "Executing tool calls in parallel",
+				map[string]any{
+					"agent_id":  agent.ID,
+					"count":     len(normalizedToolCalls),
+					"iteration": iteration,
+				})
+			var wg sync.WaitGroup
+			for i, tc := range normalizedToolCalls {
+				wg.Add(1)
+				go func(idx int, tc providers.ToolCall) {
+					defer wg.Done()
+					defer utils.Recover("agent", "tool-exec:"+tc.Name)
+					runTool(idx, tc)
+				}(i, tc)
+			}
+			wg.Wait()
+		} else {
+			for i, tc := range normalizedToolCalls {
+				runTool(i, tc)
+			}
+		}
+
+		// Process results in the original request order.
+		for i := range results {
+			tc := results[i].tc
+			toolResult := results[i].result
+			if toolResult == nil {
+				// A tool goroutine panicked and was recovered; surface it as an
+				// error result instead of dereferencing nil.
+				toolResult = tools.ErrorResult(fmt.Sprintf("tool %q panicked during execution", tc.Name)).
+					WithError(fmt.Errorf("tool panic: %s", tc.Name))
+			}
+
 			if collector != nil {
 				contentForTrace := toolResult.ForLLM
 				if contentForTrace == "" && toolResult.Err != nil {
@@ -1459,7 +1526,7 @@ func (al *AgentLoop) runLLMIteration(
 					tc.Arguments,
 					contentForTrace,
 					toolResult.IsError,
-					time.Since(toolStart).Milliseconds(),
+					results[i].duration.Milliseconds(),
 				)
 			}
 			agent.ContextBuilder.RecordToolCall(tc.Name, opts.SessionKey)

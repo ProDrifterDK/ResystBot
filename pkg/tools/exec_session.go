@@ -29,6 +29,10 @@ func (t *ExecSessionTool) Name() string {
 	return "exec_session"
 }
 
+// IsSequential implements SequentialTool: exec_session drives a shared
+// interactive PTY session manager and must not run concurrently.
+func (t *ExecSessionTool) IsSequential() bool { return true }
+
 func (t *ExecSessionTool) Description() string {
 	return "Run and manage interactive PTY-backed shell sessions. Actions: run, list, poll, read, write, kill, send-keys."
 }

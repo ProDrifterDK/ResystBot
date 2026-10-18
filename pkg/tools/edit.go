@@ -29,6 +29,10 @@ func (t *EditFileTool) Name() string {
 	return "edit_file"
 }
 
+// IsSequential implements SequentialTool: edit_file is a read-modify-write on a
+// file and must not race with other tool calls in the same iteration.
+func (t *EditFileTool) IsSequential() bool { return true }
+
 func (t *EditFileTool) Description() string {
 	return "Edit a file by replacing old_text with new_text. The old_text must exist exactly in the file."
 }
@@ -94,6 +98,10 @@ func NewAppendFileTool(workspace string, restrict bool) *AppendFileTool {
 func (t *AppendFileTool) Name() string {
 	return "append_file"
 }
+
+// IsSequential implements SequentialTool: append_file mutates a file and must
+// not race with other tool calls in the same iteration.
+func (t *AppendFileTool) IsSequential() bool { return true }
 
 func (t *AppendFileTool) Description() string {
 	return "Append content to the end of a file"

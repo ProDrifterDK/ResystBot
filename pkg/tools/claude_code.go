@@ -99,6 +99,10 @@ func (t *ClaudeCodeTool) Name() string {
 	return "claude_code"
 }
 
+// IsSequential implements SequentialTool: claude_code is an async tool that
+// shares a session store and callback across calls.
+func (t *ClaudeCodeTool) IsSequential() bool { return true }
+
 func (t *ClaudeCodeTool) Description() string {
 	return `Delegate complex tasks to Claude Code, a powerful AI coding agent with a 1M token context window. Claude Code can read, write, and edit code, run shell commands, search codebases, and iterate until the job is done.
 

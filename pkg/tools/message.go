@@ -25,6 +25,11 @@ func (t *MessageTool) Name() string {
 	return "message"
 }
 
+// IsSequential implements SequentialTool: message reads/writes its per-round
+// send-tracking state and default target on the shared receiver, and user-facing
+// sends should keep a deterministic order.
+func (t *MessageTool) IsSequential() bool { return true }
+
 func (t *MessageTool) Description() string {
 	return "Send a message to user on a chat channel. Use this when you want to communicate something."
 }

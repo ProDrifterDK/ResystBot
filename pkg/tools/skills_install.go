@@ -38,6 +38,10 @@ func (t *InstallSkillTool) Name() string {
 	return "install_skill"
 }
 
+// IsSequential implements SequentialTool: install_skill writes into the shared
+// skills directory and must not race with other tool calls.
+func (t *InstallSkillTool) IsSequential() bool { return true }
+
 func (t *InstallSkillTool) Description() string {
 	return "Install a skill from a registry by slug. Downloads and extracts the skill into the workspace. Use find_skills first to discover available skills."
 }
