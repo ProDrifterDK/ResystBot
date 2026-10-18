@@ -459,3 +459,38 @@ func TestToolRegistry_ConcurrentAccess(t *testing.T) {
 		t.Error("expected tools to be registered after concurrent access")
 	}
 }
+func TestToolRegistry_RemoveAll(t *testing.T) {
+	r := NewToolRegistry()
+	r.Register(newMockTool("keep", "kept"))
+	r.Register(newMockTool("drop_a", "dropped"))
+	r.Register(newMockTool("drop_b", "dropped"))
+
+	// "missing" is deliberately absent: RemoveAll must ignore unknown names so
+	// a policy list can be applied without guarding every entry.
+	r.RemoveAll([]string{"drop_a", "drop_b", "missing"})
+
+	if _, ok := r.Get("drop_a"); ok {
+		t.Error("drop_a should have been removed")
+	}
+	if _, ok := r.Get("drop_b"); ok {
+		t.Error("drop_b should have been removed")
+	}
+	if _, ok := r.Get("keep"); !ok {
+		t.Error("keep should have survived")
+	}
+	if r.Count() != 1 {
+		t.Errorf("expected 1 remaining tool, got %d", r.Count())
+	}
+}
+
+func TestToolRegistry_RemoveAll_NilAndEmpty(t *testing.T) {
+	r := NewToolRegistry()
+	r.Register(newMockTool("keep", "kept"))
+
+	r.RemoveAll(nil)
+	r.RemoveAll([]string{})
+
+	if r.Count() != 1 {
+		t.Errorf("no-op RemoveAll changed the registry: count=%d", r.Count())
+	}
+}

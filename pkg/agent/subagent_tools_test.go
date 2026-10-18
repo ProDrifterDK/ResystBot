@@ -54,6 +54,12 @@ func namesToSet(names []string) map[string]bool {
 func newSubagentToolsLoop(t *testing.T, helperSubagents *config.SubagentsConfig) (*AgentLoop, *toolRecordingProvider) {
 	t.Helper()
 	cfg := &config.Config{
+		// claude_code is opt-in globally; enable it so the privileged-tool
+		// stripping has something to strip. Otherwise the exclusion assertions
+		// would pass because the tool was never registered at all.
+		Tools: config.ToolsConfig{
+			ClaudeCode: config.ClaudeCodeConfig{Enabled: true},
+		},
 		Agents: config.AgentsConfig{
 			Defaults: config.AgentDefaults{
 				Workspace:         t.TempDir(),
@@ -157,5 +163,102 @@ func TestSubagentTargetProfileKeepsRecursiveToolsWhenEnabled(t *testing.T) {
 	}
 	if set["message"] {
 		t.Error("message must be stripped even when recursive delegation is enabled")
+	}
+}
+
+// privilegedTools are registered on every agent, but they expand the run's own
+// capabilities (install new skills, hand off to an autonomous external agent),
+// so they must not reach a subagent run unless the target agent opts in.
+var privilegedTools = []string{"find_skills", "install_skill", "claude_code"}
+
+// TestSubagentTargetProfileExcludesPrivilegedTools is the regression test for
+// the escalation surface: a subagent run inherited find_skills, install_skill
+// and claude_code from the target agent's registry.
+func TestSubagentTargetProfileExcludesPrivilegedTools(t *testing.T) {
+	al, provider := newSubagentToolsLoop(t, nil)
+
+	// The parent registry must actually hold the tools, otherwise the
+	// exclusion assertions below would pass for the wrong reason (e.g. if the
+	// registration were moved after the snapshot).
+	parent, ok := al.registry.GetAgent("helper")
+	if !ok {
+		t.Fatal("no agent helper")
+	}
+	for _, name := range privilegedTools {
+		if _, ok := parent.Tools.Get(name); !ok {
+			t.Fatalf("test setup: %q is not registered on the parent agent", name)
+		}
+	}
+
+	manager, ok := al.subagentManagers["main"]
+	if !ok {
+		t.Fatal("no subagent manager for main")
+	}
+	if _, err := manager.Delegate(context.Background(), "do the thing", "helper", "", "", ""); err != nil {
+		t.Fatalf("Delegate() error = %v", err)
+	}
+
+	offered := provider.offeredNames()
+	set := namesToSet(offered)
+	for _, name := range privilegedTools {
+		if set[name] {
+			t.Errorf("subagent run was offered privileged tool %q; offered=%v", name, offered)
+		}
+	}
+	// Boundary pin: skill_load ("skill") only reads a skill already in the
+	// workspace. It is not an escalation surface and must survive.
+	if !set["skill"] {
+		t.Errorf("skill_load must remain available to subagent runs; offered=%v", offered)
+	}
+}
+
+// TestSubagentDefaultProfileExcludesPrivilegedTools covers the no-agent_id
+// path, which uses the manager's own default tool registry.
+func TestSubagentDefaultProfileExcludesPrivilegedTools(t *testing.T) {
+	al, provider := newSubagentToolsLoop(t, nil)
+
+	manager, ok := al.subagentManagers["main"]
+	if !ok {
+		t.Fatal("no subagent manager for main")
+	}
+	if _, err := manager.Delegate(context.Background(), "do the thing", "", "", "", ""); err != nil {
+		t.Fatalf("Delegate() error = %v", err)
+	}
+
+	offered := provider.offeredNames()
+	set := namesToSet(offered)
+	for _, name := range privilegedTools {
+		if set[name] {
+			t.Errorf("subagent run was offered privileged tool %q; offered=%v", name, offered)
+		}
+	}
+}
+
+// TestSubagentTargetProfileKeepsPrivilegedToolsWhenEnabled asserts the opt-in
+// and, just as importantly, that the two subagent flags are independent axes:
+// enabling privileged tools must not resurrect spawn/delegate.
+func TestSubagentTargetProfileKeepsPrivilegedToolsWhenEnabled(t *testing.T) {
+	al, provider := newSubagentToolsLoop(t, &config.SubagentsConfig{AllowPrivilegedTools: true})
+
+	manager, ok := al.subagentManagers["main"]
+	if !ok {
+		t.Fatal("no subagent manager for main")
+	}
+	if _, err := manager.Delegate(context.Background(), "do the thing", "helper", "", "", ""); err != nil {
+		t.Fatalf("Delegate() error = %v", err)
+	}
+
+	offered := provider.offeredNames()
+	set := namesToSet(offered)
+	for _, name := range privilegedTools {
+		if !set[name] {
+			t.Errorf("privileged tool %q should be kept when enabled; offered=%v", name, offered)
+		}
+	}
+	if set["spawn"] || set["delegate"] {
+		t.Errorf("allow_privileged_tools must not re-enable recursive tools; offered=%v", offered)
+	}
+	if set["message"] {
+		t.Error("message must be stripped even when privileged tools are enabled")
 	}
 }

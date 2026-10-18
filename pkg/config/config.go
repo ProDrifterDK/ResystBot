@@ -193,6 +193,13 @@ type SubagentsConfig struct {
 	// stripped of spawn/delegate so a delegation chain cannot recurse without
 	// bound. The message tool is always stripped regardless of this flag.
 	AllowRecursiveDelegation bool `json:"allow_recursive_delegation,omitempty"`
+	// AllowPrivilegedTools keeps the tools that expand a run's own
+	// capabilities available when this agent runs *as a subagent*:
+	// find_skills, install_skill and claude_code. Off by default: a subagent
+	// is meant to finish the task it was given with the sandbox it was given,
+	// not to acquire new capabilities or hand control to another agent.
+	// Independent of AllowRecursiveDelegation.
+	AllowPrivilegedTools bool `json:"allow_privileged_tools,omitempty"`
 }
 
 type PeerMatch struct {

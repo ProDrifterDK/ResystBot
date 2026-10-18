@@ -229,6 +229,41 @@ can orchestrate other agents. The `message` tool is always stripped from
 subagent runs regardless of this setting, because subagents relay their result
 through `attempt_completion` instead of writing to channels directly.
 
+### Privileged tools
+
+Subagent runs are also stripped of the tools that *expand a run's own
+capabilities*, as opposed to doing the task it was handed:
+
+| Tool | Why it is stripped |
+|------|--------------------|
+| `install_skill` | Downloads and extracts a skill into the workspace — a write surface. |
+| `find_skills` | The discovery half of the same capability; without `install_skill` it is a dangling instruction. |
+| `claude_code` | Hands the task to an autonomous external agent with its own budget and workspace access. |
+
+An agent can opt back in with `subagents.allow_privileged_tools`:
+
+```json
+{
+  "agents": {
+    "list": [
+      {
+        "id": "librarian",
+        "subagents": {
+          "allow_privileged_tools": true
+        }
+      }
+    ]
+  }
+}
+```
+
+The two flags are independent axes. Setting `allow_privileged_tools` does **not**
+re-enable `spawn`/`delegate`, and vice versa. An agent that needs both must set
+both.
+
+`skill` (the lazy skill loader) is *not* stripped: it only reads a skill already
+present in the workspace, so it cannot acquire anything new.
+
 ## Environment Variables
 
 All configuration options can be overridden via environment variables with the format `PICOCLAW_TOOLS_<SECTION>_<KEY>`:

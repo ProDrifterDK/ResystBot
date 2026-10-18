@@ -176,10 +176,27 @@ const (
 	toolNameMessage  = "message"
 	toolNameSpawn    = "spawn"
 	toolNameDelegate = "delegate"
+
+	toolNameFindSkills   = "find_skills"
+	toolNameInstallSkill = "install_skill"
+	toolNameClaudeCode   = "claude_code"
 )
 
+// recursiveSubagentTools let a run delegate to another agent. Stripped from
+// subagent runs unless the target agent sets
+// subagents.allow_recursive_delegation.
+var recursiveSubagentTools = []string{toolNameSpawn, toolNameDelegate}
+
+// privilegedSubagentTools let a run expand its own capabilities instead of just
+// doing the task it was handed: find_skills/install_skill are the discovery and
+// install halves of one capability (and install_skill writes into the
+// workspace), while claude_code hands the task to an autonomous external agent.
+// Stripped from subagent runs unless the target agent sets
+// subagents.allow_privileged_tools.
+var privilegedSubagentTools = []string{toolNameFindSkills, toolNameInstallSkill, toolNameClaudeCode}
+
 // cloneSubagentTools returns a copy of the agent's tool registry with the tools
-// that must never reach a subagent run removed:
+// that must not reach a subagent run removed:
 //
 //   - "message" is always removed. Subagents relay results through
 //     attempt_completion, which routes back via processSystemMessage, instead of
@@ -188,15 +205,31 @@ const (
 //     subagents.allow_recursive_delegation, so a delegation chain cannot
 //     recurse without bound. SubagentManager's depth counter stays as the
 //     backstop for opted-in chains.
+//   - "find_skills", "install_skill" and "claude_code" are removed unless the
+//     agent opts in via subagents.allow_privileged_tools. A subagent is handed a
+//     task and a sandbox; acquiring new capabilities (installing skills) or
+//     handing control to an autonomous external agent (claude_code) is a
+//     different act from completing that task, and stays with the parent agent.
 //
-// Call this *after* spawn/delegate have been registered on agent.Tools, so the
-// stripping is an explicit rule rather than a side effect of call ordering.
+// The two opt-ins are independent axes: enabling one never re-enables the
+// other.
+//
+// Call this *after* the tools it strips have been registered on agent.Tools, so
+// the stripping is an explicit rule rather than a side effect of call ordering.
 func cloneSubagentTools(agent *AgentInstance) *tools.ToolRegistry {
 	cloned := agent.Tools.Clone()
+
+	// A nil Subagents block means "no opt-ins", so both conservative defaults
+	// apply.
+	allowRecursive := agent.Subagents != nil && agent.Subagents.AllowRecursiveDelegation
+	allowPrivileged := agent.Subagents != nil && agent.Subagents.AllowPrivilegedTools
+
 	cloned.Remove(toolNameMessage)
-	if agent.Subagents == nil || !agent.Subagents.AllowRecursiveDelegation {
-		cloned.Remove(toolNameSpawn)
-		cloned.Remove(toolNameDelegate)
+	if !allowRecursive {
+		cloned.RemoveAll(recursiveSubagentTools)
+	}
+	if !allowPrivileged {
+		cloned.RemoveAll(privilegedSubagentTools)
 	}
 	return cloned
 }

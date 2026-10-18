@@ -282,3 +282,14 @@ func (r *ToolRegistry) Remove(name string) {
 	defer r.mu.Unlock()
 	delete(r.tools, name)
 }
+
+// RemoveAll deletes each named tool from the registry. Names that are not
+// registered are ignored, so a policy can be expressed as a list without
+// guarding every entry.
+func (r *ToolRegistry) RemoveAll(names []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, name := range names {
+		delete(r.tools, name)
+	}
+}
