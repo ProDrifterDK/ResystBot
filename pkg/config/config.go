@@ -233,6 +233,10 @@ type AgentDefaults struct {
 	// SummarizeTokenPercent triggers summarization once estimated tokens exceed this
 	// percentage of the context window. 0 falls back to the built-in default (80).
 	SummarizeTokenPercent int `json:"summarize_token_percent" env:"PICOCLAW_AGENTS_DEFAULTS_SUMMARIZE_TOKEN_PERCENT"`
+	// LLM retry knobs (port of upstream 06fad957). MaxLLMRetries counts retries
+	// after the first attempt; LLMRetryBackoffSecs is the per-attempt backoff step.
+	MaxLLMRetries       int `json:"max_llm_retries,omitempty"        env:"PICOCLAW_AGENTS_DEFAULTS_MAX_LLM_RETRIES"`
+	LLMRetryBackoffSecs int `json:"llm_retry_backoff_secs,omitempty" env:"PICOCLAW_AGENTS_DEFAULTS_LLM_RETRY_BACKOFF_SECS"`
 }
 
 // GetModelName returns the effective model name for the agent defaults.

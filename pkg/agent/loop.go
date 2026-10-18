@@ -1151,7 +1151,14 @@ func (al *AgentLoop) runLLMIteration(
 		messages = sanitizeMessageHistory(messages)
 
 		// Retry loop for context/token errors
-		maxRetries := 3
+		maxRetries := agent.MaxLLMRetries
+		if maxRetries <= 0 {
+			maxRetries = 3
+		}
+		backoffSecs := agent.LLMRetryBackoffSecs
+		if backoffSecs <= 0 {
+			backoffSecs = 2
+		}
 		for retry := 0; retry <= maxRetries; retry++ {
 			llmStart := time.Now()
 			var fbResult *providers.FallbackResult
@@ -1271,7 +1278,7 @@ func (al *AgentLoop) runLLMIteration(
 					"reason": transientReason,
 					"retry":  retry,
 				})
-				time.Sleep(time.Duration(retry+1) * 2 * time.Second) // Exponential backoff
+				time.Sleep(time.Duration(retry+1) * time.Duration(backoffSecs) * time.Second) // Exponential backoff
 				continue
 			}
 			break

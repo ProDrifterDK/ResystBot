@@ -34,15 +34,18 @@ type AgentInstance struct {
 	// Summarization thresholds (port of upstream df1b53fd).
 	SummarizeMessageThreshold int
 	SummarizeTokenPercent     int
-	Provider                  providers.LLMProvider
-	ProvidersByName           map[string]providers.LLMProvider // provider-name → provider, for fallback routing
-	Sessions                  *session.SessionManager
-	ContextBuilder            *ContextBuilder
-	Tools                     *tools.ToolRegistry
-	Subagents                 *config.SubagentsConfig
-	SkillsFilter              []string
-	Candidates                []providers.FallbackCandidate
-	MCPManager                *mcp.Manager
+	// LLM retry knobs (port of upstream 06fad957).
+	MaxLLMRetries       int
+	LLMRetryBackoffSecs int
+	Provider            providers.LLMProvider
+	ProvidersByName     map[string]providers.LLMProvider // provider-name → provider, for fallback routing
+	Sessions            *session.SessionManager
+	ContextBuilder      *ContextBuilder
+	Tools               *tools.ToolRegistry
+	Subagents           *config.SubagentsConfig
+	SkillsFilter        []string
+	Candidates          []providers.FallbackCandidate
+	MCPManager          *mcp.Manager
 }
 
 // NewAgentInstance creates an agent instance from config.
@@ -196,6 +199,17 @@ func newAgentInstanceWithMCPManager(
 		summarizeMessageThreshold = agentCfg.SummarizeMessageThreshold
 	}
 
+	// LLM retry knobs (port of upstream 06fad957). Defaults preserve our
+	// historical behaviour: 3 retries with a 2s backoff step.
+	maxLLMRetries := defaults.MaxLLMRetries
+	if maxLLMRetries <= 0 {
+		maxLLMRetries = 3
+	}
+	llmRetryBackoffSecs := defaults.LLMRetryBackoffSecs
+	if llmRetryBackoffSecs <= 0 {
+		llmRetryBackoffSecs = 2
+	}
+
 	thinkingLevel := ""
 
 	// Build candidates using the actual API model strings from model_list, not the model_name shorthands.
@@ -282,15 +296,18 @@ func newAgentInstanceWithMCPManager(
 
 		SummarizeMessageThreshold: summarizeMessageThreshold,
 		SummarizeTokenPercent:     summarizeTokenPercent,
-		Provider:                  provider,
-		ProvidersByName:           providersByName,
-		Sessions:                  sessionsManager,
-		ContextBuilder:            contextBuilder,
-		Tools:                     toolsRegistry,
-		Subagents:                 subagents,
-		SkillsFilter:              skillsFilter,
-		Candidates:                candidates,
-		MCPManager:                mcpManager,
+
+		MaxLLMRetries:       maxLLMRetries,
+		LLMRetryBackoffSecs: llmRetryBackoffSecs,
+		Provider:            provider,
+		ProvidersByName:     providersByName,
+		Sessions:            sessionsManager,
+		ContextBuilder:      contextBuilder,
+		Tools:               toolsRegistry,
+		Subagents:           subagents,
+		SkillsFilter:        skillsFilter,
+		Candidates:          candidates,
+		MCPManager:          mcpManager,
 	}
 }
 
