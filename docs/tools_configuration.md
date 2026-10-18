@@ -199,6 +199,36 @@ Self-delegation is always rejected. Delegation cycles (A → B → A → …) ar
 bounded by a per-agent depth guard (default 3 re-entries) so a cycle cannot
 recurse without limit.
 
+### Recursive delegation
+
+Subagent runs are stripped of `spawn` and `delegate` by default: a spawned or
+delegated run cannot delegate further, no matter which `agent_id` it targets.
+That is the primary defence against unbounded delegation chains; the depth guard
+above is the backstop.
+
+An agent can opt back in with `subagents.allow_recursive_delegation`:
+
+```json
+{
+  "agents": {
+    "list": [
+      {
+        "id": "coordinator",
+        "subagents": {
+          "allow_agents": ["specialist"],
+          "allow_recursive_delegation": true
+        }
+      }
+    ]
+  }
+}
+```
+
+With the flag set, a run *as* `coordinator` keeps `spawn` and `delegate`, so it
+can orchestrate other agents. The `message` tool is always stripped from
+subagent runs regardless of this setting, because subagents relay their result
+through `attempt_completion` instead of writing to channels directly.
+
 ## Environment Variables
 
 All configuration options can be overridden via environment variables with the format `PICOCLAW_TOOLS_<SECTION>_<KEY>`:

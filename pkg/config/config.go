@@ -188,6 +188,11 @@ type AgentSkillsConfig struct {
 type SubagentsConfig struct {
 	AllowAgents []string          `json:"allow_agents,omitempty"`
 	Model       *AgentModelConfig `json:"model,omitempty"`
+	// AllowRecursiveDelegation keeps the spawn/delegate tools available when
+	// this agent runs *as a subagent*. Off by default: subagent runs are
+	// stripped of spawn/delegate so a delegation chain cannot recurse without
+	// bound. The message tool is always stripped regardless of this flag.
+	AllowRecursiveDelegation bool `json:"allow_recursive_delegation,omitempty"`
 }
 
 type PeerMatch struct {

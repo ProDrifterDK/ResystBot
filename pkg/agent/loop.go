@@ -171,6 +171,36 @@ func (al *AgentLoop) ContextManager() ContextManager {
 	return al.contextMgr
 }
 
+// Tool names that get special treatment when building a subagent tool set.
+const (
+	toolNameMessage  = "message"
+	toolNameSpawn    = "spawn"
+	toolNameDelegate = "delegate"
+)
+
+// cloneSubagentTools returns a copy of the agent's tool registry with the tools
+// that must never reach a subagent run removed:
+//
+//   - "message" is always removed. Subagents relay results through
+//     attempt_completion, which routes back via processSystemMessage, instead of
+//     writing to external channels directly.
+//   - "spawn" and "delegate" are removed unless the agent opts in via
+//     subagents.allow_recursive_delegation, so a delegation chain cannot
+//     recurse without bound. SubagentManager's depth counter stays as the
+//     backstop for opted-in chains.
+//
+// Call this *after* spawn/delegate have been registered on agent.Tools, so the
+// stripping is an explicit rule rather than a side effect of call ordering.
+func cloneSubagentTools(agent *AgentInstance) *tools.ToolRegistry {
+	cloned := agent.Tools.Clone()
+	cloned.Remove(toolNameMessage)
+	if agent.Subagents == nil || !agent.Subagents.AllowRecursiveDelegation {
+		cloned.Remove(toolNameSpawn)
+		cloned.Remove(toolNameDelegate)
+	}
+	return cloned
+}
+
 // registerSharedTools registers tools that are shared across all agents (web, message, spawn).
 // It returns the map of SubagentManagers keyed by agent ID so callers can wait on them.
 func registerSharedTools(
@@ -294,13 +324,6 @@ func registerSharedTools(
 		subagentManager := tools.NewSubagentManager(provider, agent.Model, agent.Workspace, msgBus)
 		subagentManager.SetLLMOptions(agent.MaxTokens, agent.Temperature)
 		subagentManager.SetMaxIterations(agent.MaxIterations)
-		// Clone tools for subagents and remove message tool to prevent
-		// subagents from sending messages directly to external channels.
-		// Subagents should only communicate results via attempt_completion,
-		// which routes through processSystemMessage for proper relay.
-		subagentTools := agent.Tools.Clone()
-		subagentTools.Remove("message")
-		subagentManager.SetTools(subagentTools)
 		subagentManagers[agentID] = subagentManager
 
 		spawnTool := tools.NewSpawnTool(subagentManager)
@@ -312,14 +335,18 @@ func registerSharedTools(
 
 		// Delegate tool: synchronous cross-agent handoff, gated by the same
 		// subagents.allow_agents permission as spawn. Self-delegation is
-		// rejected explicitly. Registered after subagentTools is cloned, so
-		// subagents do not inherit it and cannot recurse via delegate.
+		// rejected explicitly.
 		delegateTool := tools.NewDelegateTool(subagentManager)
 		delegateTool.SetSelfAgentID(currentAgentID)
 		delegateTool.SetAllowlistChecker(func(targetAgentID string) bool {
 			return registry.CanSpawnSubagent(currentAgentID, targetAgentID)
 		})
 		agent.Tools.Register(delegateTool)
+
+		// Snapshot the completed registry for subagent runs. Done after
+		// spawn/delegate are registered so the stripping in cloneSubagentTools
+		// is explicit instead of relying on registration order.
+		subagentManager.SetTools(cloneSubagentTools(agent))
 
 		// Update context builder with the complete tools registry
 		agent.ContextBuilder.SetToolsRegistry(agent.Tools)
@@ -340,11 +367,11 @@ func registerSharedTools(
 			if !ok {
 				continue
 			}
-			// When registering agent profiles for subagent spawning,
-			// also strip the message tool from the target agent's tools.
-			subagentTargetTools := targetAgent.Tools.Clone()
-			subagentTargetTools.Remove("message")
-			manager.RegisterAgentProfile(targetAgentID, targetAgent.Provider, targetAgent.Model, subagentTargetTools, targetAgent.Candidates, targetAgent.ProvidersByName, targetAgent.MaxIterations)
+			// Strip the tools a subagent run must not hold (message always;
+			// spawn/delegate unless the target agent opts into recursive
+			// delegation). Without this the target profile inherits the whole
+			// registry, which by now contains spawn and delegate.
+			manager.RegisterAgentProfile(targetAgentID, targetAgent.Provider, targetAgent.Model, cloneSubagentTools(targetAgent), targetAgent.Candidates, targetAgent.ProvidersByName, targetAgent.MaxIterations)
 		}
 	}
 
