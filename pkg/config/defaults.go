@@ -44,6 +44,11 @@ func DefaultConfig() *Config {
 				MaxTokens:           8192,
 				Temperature:         nil, // nil means use provider default
 				MaxToolIterations:   20,
+				// Summarization knobs (port of upstream df1b53fd).
+				// Token percent defaults to our historical 80%; message-count
+				// trigger is disabled (0) to preserve existing behaviour.
+				SummarizeMessageThreshold: 0,
+				SummarizeTokenPercent:     80,
 			},
 		},
 		Bindings: []AgentBinding{},

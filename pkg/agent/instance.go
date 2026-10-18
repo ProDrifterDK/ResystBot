@@ -31,15 +31,18 @@ type AgentInstance struct {
 	ContextWindow       int
 	ThinkingBudget      int
 	ThinkingLevel       string
-	Provider            providers.LLMProvider
-	ProvidersByName     map[string]providers.LLMProvider // provider-name → provider, for fallback routing
-	Sessions            *session.SessionManager
-	ContextBuilder      *ContextBuilder
-	Tools               *tools.ToolRegistry
-	Subagents           *config.SubagentsConfig
-	SkillsFilter        []string
-	Candidates          []providers.FallbackCandidate
-	MCPManager          *mcp.Manager
+	// Summarization thresholds (port of upstream df1b53fd).
+	SummarizeMessageThreshold int
+	SummarizeTokenPercent     int
+	Provider                  providers.LLMProvider
+	ProvidersByName           map[string]providers.LLMProvider // provider-name → provider, for fallback routing
+	Sessions                  *session.SessionManager
+	ContextBuilder            *ContextBuilder
+	Tools                     *tools.ToolRegistry
+	Subagents                 *config.SubagentsConfig
+	SkillsFilter              []string
+	Candidates                []providers.FallbackCandidate
+	MCPManager                *mcp.Manager
 }
 
 // NewAgentInstance creates an agent instance from config.
@@ -180,6 +183,19 @@ func newAgentInstanceWithMCPManager(
 		thinkingBudget = agentCfg.ThinkingBudget
 	}
 
+	// Summarization thresholds (port of upstream df1b53fd).
+	summarizeTokenPercent := defaults.SummarizeTokenPercent
+	if summarizeTokenPercent <= 0 {
+		summarizeTokenPercent = 80 // preserve legacy behaviour when unset
+	}
+	summarizeMessageThreshold := defaults.SummarizeMessageThreshold
+	if agentCfg != nil && agentCfg.SummarizeTokenPercent > 0 {
+		summarizeTokenPercent = agentCfg.SummarizeTokenPercent
+	}
+	if agentCfg != nil && agentCfg.SummarizeMessageThreshold > 0 {
+		summarizeMessageThreshold = agentCfg.SummarizeMessageThreshold
+	}
+
 	thinkingLevel := ""
 
 	// Build candidates using the actual API model strings from model_list, not the model_name shorthands.
@@ -252,26 +268,29 @@ func newAgentInstanceWithMCPManager(
 	}
 
 	return &AgentInstance{
-		ID:              agentID,
-		Name:            agentName,
-		Model:           model,
-		Fallbacks:       fallbacks,
-		Workspace:       workspace,
-		MaxIterations:   maxIter,
-		MaxTokens:       maxTokens,
-		Temperature:     temperature,
-		ContextWindow:   contextWindow,
-		ThinkingBudget:  thinkingBudget,
-		ThinkingLevel:   thinkingLevel,
-		Provider:        provider,
-		ProvidersByName: providersByName,
-		Sessions:        sessionsManager,
-		ContextBuilder:  contextBuilder,
-		Tools:           toolsRegistry,
-		Subagents:       subagents,
-		SkillsFilter:    skillsFilter,
-		Candidates:      candidates,
-		MCPManager:      mcpManager,
+		ID:             agentID,
+		Name:           agentName,
+		Model:          model,
+		Fallbacks:      fallbacks,
+		Workspace:      workspace,
+		MaxIterations:  maxIter,
+		MaxTokens:      maxTokens,
+		Temperature:    temperature,
+		ContextWindow:  contextWindow,
+		ThinkingBudget: thinkingBudget,
+		ThinkingLevel:  thinkingLevel,
+
+		SummarizeMessageThreshold: summarizeMessageThreshold,
+		SummarizeTokenPercent:     summarizeTokenPercent,
+		Provider:                  provider,
+		ProvidersByName:           providersByName,
+		Sessions:                  sessionsManager,
+		ContextBuilder:            contextBuilder,
+		Tools:                     toolsRegistry,
+		Subagents:                 subagents,
+		SkillsFilter:              skillsFilter,
+		Candidates:                candidates,
+		MCPManager:                mcpManager,
 	}
 }
 

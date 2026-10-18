@@ -170,6 +170,9 @@ type AgentConfig struct {
 	ThinkingBudget    int               `json:"thinking_budget,omitempty"`
 	ContextWindow     int               `json:"context_window,omitempty"`
 	MCPServers        []string          `json:"mcp_servers,omitempty"`
+	// Per-agent summarization overrides (port of upstream df1b53fd). 0 = inherit defaults.
+	SummarizeMessageThreshold int `json:"summarize_message_threshold,omitempty"`
+	SummarizeTokenPercent     int `json:"summarize_token_percent,omitempty"`
 }
 
 // AgentSkillsConfig holds per-agent skill trigger configuration.
@@ -223,6 +226,13 @@ type AgentDefaults struct {
 	Temperature         *float64 `json:"temperature,omitempty"           env:"PICOCLAW_AGENTS_DEFAULTS_TEMPERATURE"`
 	MaxToolIterations   int      `json:"max_tool_iterations"             env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`
 	ThinkingBudget      int      `json:"thinking_budget,omitempty"       env:"PICOCLAW_AGENTS_DEFAULTS_THINKING_BUDGET"`
+	// SummarizeMessageThreshold triggers summarization once history exceeds this
+	// many messages. 0 disables the message-count trigger (token trigger still applies).
+	// Port of upstream df1b53fd.
+	SummarizeMessageThreshold int `json:"summarize_message_threshold" env:"PICOCLAW_AGENTS_DEFAULTS_SUMMARIZE_MESSAGE_THRESHOLD"`
+	// SummarizeTokenPercent triggers summarization once estimated tokens exceed this
+	// percentage of the context window. 0 falls back to the built-in default (80).
+	SummarizeTokenPercent int `json:"summarize_token_percent" env:"PICOCLAW_AGENTS_DEFAULTS_SUMMARIZE_TOKEN_PERCENT"`
 }
 
 // GetModelName returns the effective model name for the agent defaults.
