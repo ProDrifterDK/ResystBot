@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -81,7 +82,17 @@ type SubagentManager struct {
 	hasMaxTokens   bool
 	hasTemperature bool
 	nextID         int
+
+	// delegateDepth counts in-flight synchronous Delegate calls on this
+	// manager. It exists to break delegation cycles (A→B→A→…) that would
+	// otherwise recurse forever, since Delegate blocks the caller.
+	delegateDepth    atomic.Int64
+	maxDelegateDepth int
 }
+
+// defaultMaxDelegateDepth bounds how many times a delegation cycle may re-enter
+// the same manager before it is rejected.
+const defaultMaxDelegateDepth = 3
 
 func NewSubagentManager(
 	provider providers.LLMProvider,
@@ -89,16 +100,28 @@ func NewSubagentManager(
 	bus *bus.MessageBus,
 ) *SubagentManager {
 	return &SubagentManager{
-		tasks:         make(map[string]*SubagentTask),
-		agents:        make(map[string]*agentEntry),
-		provider:      provider,
-		defaultModel:  defaultModel,
-		bus:           bus,
-		workspace:     workspace,
-		tools:         NewToolRegistry(),
-		maxIterations: 10,
-		nextID:        1,
+		tasks:            make(map[string]*SubagentTask),
+		agents:           make(map[string]*agentEntry),
+		provider:         provider,
+		defaultModel:     defaultModel,
+		bus:              bus,
+		workspace:        workspace,
+		tools:            NewToolRegistry(),
+		maxIterations:    10,
+		maxDelegateDepth: defaultMaxDelegateDepth,
+		nextID:           1,
 	}
+}
+
+// SetMaxDelegateDepth overrides the delegation cycle guard. Values <= 0 restore
+// the default.
+func (sm *SubagentManager) SetMaxDelegateDepth(n int) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	if n <= 0 {
+		n = defaultMaxDelegateDepth
+	}
+	sm.maxDelegateDepth = n
 }
 
 // SetMaxIterations overrides the default tool iteration limit for spawned subagents.
@@ -225,67 +248,19 @@ After completing the task, provide a clear summary of what was done.`
 	}
 
 	// Run tool loop with access to tools; use agent-specific profile if targeting a named agent
-	sm.mu.RLock()
-	tools := sm.tools
-	model := sm.defaultModel
-	provider := sm.provider
-	var candidates []providers.FallbackCandidate
-	var providersByName map[string]providers.LLMProvider
-	maxIter := sm.maxIterations
-	if task.AgentID != "" {
-		if entry, ok := sm.agents[task.AgentID]; ok {
-			model = entry.model
-			if entry.provider != nil {
-				provider = entry.provider
-			}
-			if entry.tools != nil {
-				tools = entry.tools
-			}
-			candidates = entry.candidates
-			providersByName = entry.providersByName
-			if entry.maxIterations > 0 {
-				maxIter = entry.maxIterations
-			}
-		}
-	}
-	maxTokens := sm.maxTokens
-	temperature := sm.temperature
-	hasMaxTokens := sm.hasMaxTokens
-	hasTemperature := sm.hasTemperature
-	sm.mu.RUnlock()
-
-	if task.WorkingDir != "" {
-		if execTool, ok := tools.Get("exec"); ok {
-			if et, ok := execTool.(*ExecTool); ok {
-				cloned := tools.Clone()
-				cloned.Replace(et.CloneWithWorkingDir(task.WorkingDir))
-				tools = cloned
-			}
-		}
-	}
-
-	var llmOptions map[string]any
-	if hasMaxTokens || hasTemperature {
-		llmOptions = map[string]any{}
-		if hasMaxTokens {
-			llmOptions["max_tokens"] = maxTokens
-		}
-		if hasTemperature {
-			llmOptions["temperature"] = temperature
-		}
-	}
+	profile := sm.resolveRunProfile(task.AgentID, task.WorkingDir)
 
 	loopResult, err := RunToolLoop(ctx, ToolLoopConfig{
-		Provider:           provider,
-		Model:              model,
-		Tools:              tools,
-		MaxIterations:      maxIter,
-		LLMOptions:         llmOptions,
+		Provider:           profile.provider,
+		Model:              profile.model,
+		Tools:              profile.tools,
+		MaxIterations:      profile.maxIter,
+		LLMOptions:         profile.llmOptions,
 		ProgressLogger:     appendSubagentLog,
 		TaskID:             task.ID,
 		TaskLabel:          task.Label,
-		FallbackCandidates: candidates,
-		FallbackProviders:  providersByName,
+		FallbackCandidates: profile.candidates,
+		FallbackProviders:  profile.providersByName,
 	}, messages, task.OriginChannel, task.OriginChatID)
 
 	sm.mu.Lock()
@@ -458,32 +433,14 @@ func (t *SubagentTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 
 	// Use RunToolLoop to execute with tools (same as async SpawnTool)
 	sm := t.manager
-	sm.mu.RLock()
-	tools := sm.tools
-	maxIter := sm.maxIterations
-	maxTokens := sm.maxTokens
-	temperature := sm.temperature
-	hasMaxTokens := sm.hasMaxTokens
-	hasTemperature := sm.hasTemperature
-	sm.mu.RUnlock()
-
-	var llmOptions map[string]any
-	if hasMaxTokens || hasTemperature {
-		llmOptions = map[string]any{}
-		if hasMaxTokens {
-			llmOptions["max_tokens"] = maxTokens
-		}
-		if hasTemperature {
-			llmOptions["temperature"] = temperature
-		}
-	}
+	profile := sm.resolveRunProfile("", "")
 
 	loopResult, err := RunToolLoop(ctx, ToolLoopConfig{
-		Provider:      sm.provider,
-		Model:         sm.defaultModel,
-		Tools:         tools,
-		MaxIterations: maxIter,
-		LLMOptions:    llmOptions,
+		Provider:      profile.provider,
+		Model:         profile.model,
+		Tools:         profile.tools,
+		MaxIterations: profile.maxIter,
+		LLMOptions:    profile.llmOptions,
 	}, messages, t.originChannel, t.originChatID)
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("Subagent execution failed: %v", err)).WithError(err)
@@ -511,4 +468,149 @@ func (t *SubagentTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 		IsError: false,
 		Async:   false,
 	}
+}
+
+// runProfile is an immutable snapshot of the settings a subagent run executes
+// with, after applying a named agent's profile override (if any).
+type runProfile struct {
+	provider        providers.LLMProvider
+	model           string
+	tools           *ToolRegistry
+	candidates      []providers.FallbackCandidate
+	providersByName map[string]providers.LLMProvider
+	maxIter         int
+	llmOptions      map[string]any
+}
+
+// resolveRunProfile snapshots the manager settings under the read lock and, when
+// agentID names a registered agent, overrides provider/model/tools/iteration
+// budget with that agent's profile. When workingDir is set and the resolved
+// registry exposes an exec tool, the registry is cloned with the working dir
+// pinned so the shared tool instances are never mutated.
+func (sm *SubagentManager) resolveRunProfile(agentID, workingDir string) runProfile {
+	sm.mu.RLock()
+	p := runProfile{
+		provider: sm.provider,
+		model:    sm.defaultModel,
+		tools:    sm.tools,
+		maxIter:  sm.maxIterations,
+	}
+	if agentID != "" {
+		if entry, ok := sm.agents[agentID]; ok {
+			p.model = entry.model
+			if entry.provider != nil {
+				p.provider = entry.provider
+			}
+			if entry.tools != nil {
+				p.tools = entry.tools
+			}
+			p.candidates = entry.candidates
+			p.providersByName = entry.providersByName
+			if entry.maxIterations > 0 {
+				p.maxIter = entry.maxIterations
+			}
+		}
+	}
+	maxTokens := sm.maxTokens
+	temperature := sm.temperature
+	hasMaxTokens := sm.hasMaxTokens
+	hasTemperature := sm.hasTemperature
+	sm.mu.RUnlock()
+
+	if hasMaxTokens || hasTemperature {
+		p.llmOptions = map[string]any{}
+		if hasMaxTokens {
+			p.llmOptions["max_tokens"] = maxTokens
+		}
+		if hasTemperature {
+			p.llmOptions["temperature"] = temperature
+		}
+	}
+
+	if workingDir != "" && p.tools != nil {
+		if execTool, ok := p.tools.Get("exec"); ok {
+			if et, ok := execTool.(*ExecTool); ok {
+				cloned := p.tools.Clone()
+				cloned.Replace(et.CloneWithWorkingDir(workingDir))
+				p.tools = cloned
+			}
+		}
+	}
+
+	return p
+}
+
+// Delegate runs a task synchronously using a named agent's profile and returns
+// the result directly, so the caller can hand it back to the LLM in the same
+// turn. It is the blocking counterpart of Spawn.
+//
+// A per-manager depth counter guards against delegation cycles (A delegates to
+// B, B back to A, …) that would otherwise recurse without bound.
+func (sm *SubagentManager) Delegate(
+	ctx context.Context,
+	task, agentID, workingDir, originChannel, originChatID string,
+) (*ToolResult, error) {
+	if sm == nil {
+		return nil, fmt.Errorf("subagent manager not configured")
+	}
+	if strings.TrimSpace(task) == "" {
+		return nil, fmt.Errorf("task is required")
+	}
+
+	sm.mu.RLock()
+	maxDepth := sm.maxDelegateDepth
+	sm.mu.RUnlock()
+	if maxDepth <= 0 {
+		maxDepth = defaultMaxDelegateDepth
+	}
+	if depth := sm.delegateDepth.Add(1); depth > int64(maxDepth) {
+		sm.delegateDepth.Add(-1)
+		return nil, fmt.Errorf("delegation cycle detected: depth limit (%d) exceeded", maxDepth)
+	}
+	defer sm.delegateDepth.Add(-1)
+
+	profile := sm.resolveRunProfile(agentID, workingDir)
+
+	messages := []providers.Message{
+		{
+			Role:    "system",
+			Content: "You are a subagent. Complete the given task independently and provide a clear, concise result.",
+		},
+		{
+			Role:    "user",
+			Content: task,
+		},
+	}
+
+	logID := "delegate:" + agentID
+	appendSubagentLog(logID, agentID, "START", task)
+
+	loopResult, err := RunToolLoop(ctx, ToolLoopConfig{
+		Provider:           profile.provider,
+		Model:              profile.model,
+		Tools:              profile.tools,
+		MaxIterations:      profile.maxIter,
+		LLMOptions:         profile.llmOptions,
+		ProgressLogger:     appendSubagentLog,
+		TaskID:             logID,
+		TaskLabel:          agentID,
+		FallbackCandidates: profile.candidates,
+		FallbackProviders:  profile.providersByName,
+	}, messages, originChannel, originChatID)
+	if err != nil {
+		appendSubagentLog(logID, agentID, "failed", err.Error())
+		return nil, err
+	}
+
+	appendSubagentLog(logID, agentID, "COMPLETED",
+		fmt.Sprintf("iterations=%d result_len=%d", loopResult.Iterations, len(loopResult.Content)))
+
+	return &ToolResult{
+		ForLLM: fmt.Sprintf("Delegated task completed (iterations: %d):\n%s",
+			loopResult.Iterations, loopResult.Content),
+		ForUser: loopResult.Content,
+		Silent:  false,
+		IsError: false,
+		Async:   false,
+	}, nil
 }

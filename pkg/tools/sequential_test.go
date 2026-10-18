@@ -18,6 +18,7 @@ func TestMutatingToolsAreSequential(t *testing.T) {
 		(*ExecSessionTool)(nil),
 		(*SpawnTool)(nil),
 		(*SubagentTool)(nil),
+		(*DelegateTool)(nil),
 		(*MemoryTool)(nil),
 		(*CronTool)(nil),
 		(*ClaudeCodeTool)(nil),

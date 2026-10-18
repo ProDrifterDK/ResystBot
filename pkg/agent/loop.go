@@ -310,6 +310,17 @@ func registerSharedTools(
 		})
 		agent.Tools.Register(spawnTool)
 
+		// Delegate tool: synchronous cross-agent handoff, gated by the same
+		// subagents.allow_agents permission as spawn. Self-delegation is
+		// rejected explicitly. Registered after subagentTools is cloned, so
+		// subagents do not inherit it and cannot recurse via delegate.
+		delegateTool := tools.NewDelegateTool(subagentManager)
+		delegateTool.SetSelfAgentID(currentAgentID)
+		delegateTool.SetAllowlistChecker(func(targetAgentID string) bool {
+			return registry.CanSpawnSubagent(currentAgentID, targetAgentID)
+		})
+		agent.Tools.Register(delegateTool)
+
 		// Update context builder with the complete tools registry
 		agent.ContextBuilder.SetToolsRegistry(agent.Tools)
 	}
@@ -1564,24 +1575,13 @@ func (al *AgentLoop) runLLMIteration(
 // updateToolContexts updates the context for tools that need channel/chatID info.
 func (al *AgentLoop) updateToolContexts(agent *AgentInstance, channel, chatID string) {
 	// Use ContextualTool interface instead of type assertions
-	if tool, ok := agent.Tools.Get("message"); ok {
-		if mt, ok := tool.(tools.ContextualTool); ok {
-			mt.SetContext(channel, chatID)
+	for _, name := range []string{"message", "spawn", "subagent", "delegate", "memory"} {
+		tool, ok := agent.Tools.Get(name)
+		if !ok {
+			continue
 		}
-	}
-	if tool, ok := agent.Tools.Get("spawn"); ok {
-		if st, ok := tool.(tools.ContextualTool); ok {
-			st.SetContext(channel, chatID)
-		}
-	}
-	if tool, ok := agent.Tools.Get("subagent"); ok {
-		if st, ok := tool.(tools.ContextualTool); ok {
-			st.SetContext(channel, chatID)
-		}
-	}
-	if tool, ok := agent.Tools.Get("memory"); ok {
-		if mt, ok := tool.(tools.ContextualTool); ok {
-			mt.SetContext(channel, chatID)
+		if ct, ok := tool.(tools.ContextualTool); ok {
+			ct.SetContext(channel, chatID)
 		}
 	}
 }

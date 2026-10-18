@@ -162,6 +162,43 @@ sees a short placeholder such as `[non-text content: image (image/png)]`.
 }
 ```
 
+## Delegation Tools
+
+Three tools move work to another agent. They differ on two axes — blocking vs
+background, and generic vs named-target:
+
+| Tool | Blocking | Target | Notes |
+|------|----------|--------|-------|
+| `spawn` | no (async) | optional `agent_id` | Fire-and-forget; the result arrives later as a system message. |
+| `subagent` | yes | none | Runs synchronously with the *current* agent's profile. |
+| `delegate` | yes | required `agent_id` | Runs synchronously with the *target* agent's own workspace, model, and tools. |
+
+`delegate(agent_id, task)` hands the task to a named agent and waits for the
+answer, which is returned in the same turn and attributed as
+`[Response from agent "<agent_id>"]`.
+
+Both `spawn` and `delegate` are gated by `subagents.allow_agents` on the calling
+agent. The list accepts exact agent IDs or `"*"` for any:
+
+```json
+{
+  "agents": {
+    "list": [
+      {
+        "id": "main",
+        "subagents": {
+          "allow_agents": ["specialist", "researcher"]
+        }
+      }
+    ]
+  }
+}
+```
+
+Self-delegation is always rejected. Delegation cycles (A → B → A → …) are
+bounded by a per-agent depth guard (default 3 re-entries) so a cycle cannot
+recurse without limit.
+
 ## Environment Variables
 
 All configuration options can be overridden via environment variables with the format `PICOCLAW_TOOLS_<SECTION>_<KEY>`:
