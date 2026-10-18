@@ -313,7 +313,9 @@ func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) string {
 	}
 
 	// For deliver=false, process through agent (for complex tasks)
-	sessionKey := fmt.Sprintf("cron-%s", job.ID)
+	// Each execution gets a unique session key so history from one run does not
+	// bleed into the next (port of upstream 36b9693d).
+	sessionKey := fmt.Sprintf("cron-%s-%d", job.ID, time.Now().UnixMilli())
 
 	// Call agent with job's message
 	response, err := t.executor.ProcessDirectWithChannel(
