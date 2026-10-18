@@ -84,7 +84,7 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 		if apiBase == "" {
 			apiBase = getDefaultAPIBase(protocol)
 		}
-		return NewHTTPProviderWithMaxTokensField(cfg.APIKey, apiBase, cfg.Proxy, cfg.MaxTokensField), modelID, nil
+		return NewHTTPProviderWithMaxTokensFieldAndExtraBody(cfg.APIKey, apiBase, cfg.Proxy, cfg.MaxTokensField, cfg.ExtraBody), modelID, nil
 
 	case "openrouter", "groq", "zhipu", "gemini", "nvidia",
 		"ollama", "moonshot", "shengsuanyun", "deepseek", "cerebras",
@@ -97,7 +97,7 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 		if apiBase == "" {
 			apiBase = getDefaultAPIBase(protocol)
 		}
-		provider := NewHTTPProviderWithMaxTokensField(cfg.APIKey, apiBase, cfg.Proxy, cfg.MaxTokensField)
+		provider := NewHTTPProviderWithMaxTokensFieldAndExtraBody(cfg.APIKey, apiBase, cfg.Proxy, cfg.MaxTokensField, cfg.ExtraBody)
 		provider.SetProviderName(protocol)
 		return provider, modelID, nil
 
@@ -118,7 +118,7 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 		if cfg.APIKey == "" {
 			return nil, "", fmt.Errorf("api_key is required for anthropic protocol (model: %s)", cfg.Model)
 		}
-		return NewHTTPProviderWithMaxTokensField(cfg.APIKey, apiBase, cfg.Proxy, cfg.MaxTokensField), modelID, nil
+		return NewHTTPProviderWithMaxTokensFieldAndExtraBody(cfg.APIKey, apiBase, cfg.Proxy, cfg.MaxTokensField, cfg.ExtraBody), modelID, nil
 
 	case "antigravity":
 		return NewAntigravityProvider(), modelID, nil

@@ -32,6 +32,7 @@ type Provider struct {
 	providerName   string
 	maxTokensField string // Field name for max tokens (e.g., "max_completion_tokens" for o1/glm models)
 	httpClient     *http.Client
+	extraBody      map[string]any // Additional fields to inject into the request body (port of upstream e7ee80ff)
 }
 
 func NewProvider(apiKey, apiBase, proxy string) *Provider {
@@ -39,6 +40,10 @@ func NewProvider(apiKey, apiBase, proxy string) *Provider {
 }
 
 func NewProviderWithMaxTokensField(apiKey, apiBase, proxy, maxTokensField string) *Provider {
+	return NewProviderWithMaxTokensFieldAndExtraBody(apiKey, apiBase, proxy, maxTokensField, nil)
+}
+
+func NewProviderWithMaxTokensFieldAndExtraBody(apiKey, apiBase, proxy, maxTokensField string, extraBody map[string]any) *Provider {
 	client := &http.Client{
 		Timeout: 0,
 	}
@@ -59,6 +64,7 @@ func NewProviderWithMaxTokensField(apiKey, apiBase, proxy, maxTokensField string
 		apiBase:        strings.TrimRight(apiBase, "/"),
 		maxTokensField: maxTokensField,
 		httpClient:     client,
+		extraBody:      extraBody,
 	}
 }
 
@@ -140,6 +146,12 @@ func (p *Provider) Chat(
 				"enabled": true,
 			},
 		}
+	}
+
+	// Merge extra body fields configured per-provider/model.
+	// Injected last so they take precedence over defaults (port of upstream e7ee80ff).
+	for k, v := range p.extraBody {
+		requestBody[k] = v
 	}
 
 	jsonData, err := json.Marshal(requestBody)
