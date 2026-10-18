@@ -175,7 +175,12 @@ func (sw *SkillWatcher) addWatch(dir string) error {
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil
+		// The watch on dir itself was added above; failing to enumerate its
+		// subdirectories must not abort the caller, but it must not be silent
+		// either — otherwise hot-reload dies for this subtree with no trace.
+		logger.WarnCF("skills", "Failed to read skill directory",
+			map[string]any{"dir": dir, "error": err.Error()})
+		return nil //nolint:nilerr // logged above; parent watch is intact
 	}
 
 	for _, entry := range entries {
