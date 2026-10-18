@@ -334,7 +334,9 @@ func (p *reentrantProvider) Chat(
 	_, err := p.manager.Delegate(ctx, "recurse", "main", "", "cli", "direct")
 	if err != nil {
 		p.err = err
-		return &providers.LLMResponse{Content: "stopped: " + err.Error()}, nil
+		// The fake provider captures the error in p.err for the test to assert
+		// on; it deliberately returns a response instead of a Go error.
+		return &providers.LLMResponse{Content: "stopped: " + err.Error()}, nil //nolint:nilerr // asserted via p.err
 	}
 	return &providers.LLMResponse{Content: "nested"}, nil
 }

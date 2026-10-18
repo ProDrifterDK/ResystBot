@@ -50,7 +50,7 @@ func (idx *Indexer) IndexAll(ctx context.Context, force bool) (newCount, unchang
 		err := filepath.WalkDir(absDir, func(path string, d os.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				errCount++
-				return nil // keep walking
+				return nil //nolint:nilerr // counted; walk continues by design
 			}
 			if d.IsDir() {
 				return nil
@@ -62,13 +62,13 @@ func (idx *Indexer) IndexAll(ctx context.Context, force bool) (newCount, unchang
 			relPath, err := filepath.Rel(idx.workspace, path)
 			if err != nil {
 				errCount++
-				return nil
+				return nil //nolint:nilerr // counted; walk continues by design
 			}
 
 			data, err := os.ReadFile(path)
 			if err != nil {
 				errCount++
-				return nil
+				return nil //nolint:nilerr // counted; walk continues by design
 			}
 
 			n, u, e := idx.indexFile(ctx, relPath, string(data), force)
