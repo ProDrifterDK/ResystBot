@@ -1535,6 +1535,7 @@ func (al *AgentLoop) maybeSummarize(agent *AgentInstance, sessionKey, channel, c
 		summarizeKey := agent.ID + ":" + sessionKey
 		if _, loading := al.summarizing.LoadOrStore(summarizeKey, true); !loading {
 			go func() {
+				defer utils.Recover("agent", "summarize")
 				defer al.summarizing.Delete(summarizeKey)
 				if al.hookExecutor != nil {
 					compactCtx, compactCancel := context.WithTimeout(context.Background(), 10*time.Second)

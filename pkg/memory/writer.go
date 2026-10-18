@@ -8,6 +8,7 @@ import (
 
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/providers"
+	"github.com/sipeed/picoclaw/pkg/utils"
 )
 
 const maxConversationChunkChars = 2048
@@ -73,6 +74,7 @@ func (w *WriteHandler) IndexConversationTurn(userMessage, assistantResponse, cha
 	}
 
 	go func() {
+		defer utils.Recover("memory.writer", "index-turn")
 		chunk := w.BuildConversationChunk(userMessage, assistantResponse, chatID)
 
 		ctx := context.Background()
@@ -221,6 +223,7 @@ func (w *WriteHandler) BuildSummaryChunk(sessionKey, summaryText string) MemoryC
 // IndexSummary embeds and upserts a session summary asynchronously.
 func (w *WriteHandler) IndexSummary(sessionKey, summaryText string) {
 	go func() {
+		defer utils.Recover("memory.writer", "index-summary")
 		chunk := w.BuildSummaryChunk(sessionKey, summaryText)
 
 		ctx := context.Background()

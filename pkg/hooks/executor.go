@@ -10,6 +10,7 @@ import (
 
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/utils"
 )
 
 const defaultTimeout = 5 * time.Second
@@ -227,6 +228,7 @@ func (e *HookExecutor) runCommand(ctx context.Context, command string, input *Ho
 	}
 
 	go func() {
+		defer utils.Recover("hooks", "kill-process-tree")
 		<-hookCtx.Done()
 		killHookProcessTree(cmd)
 	}()

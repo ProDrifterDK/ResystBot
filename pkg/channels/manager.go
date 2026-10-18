@@ -15,6 +15,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/constants"
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/utils"
 )
 
 type Manager struct {
@@ -223,7 +224,7 @@ func (m *Manager) StartAll(ctx context.Context) error {
 	dispatchCtx, cancel := context.WithCancel(ctx)
 	m.dispatchTask = &asyncTask{cancel: cancel}
 
-	go m.dispatchOutbound(dispatchCtx)
+	utils.Go("channels", "dispatchOutbound", func() { m.dispatchOutbound(dispatchCtx) })
 
 	for name, channel := range m.channels {
 		logger.InfoCF("channels", "Starting channel", map[string]any{

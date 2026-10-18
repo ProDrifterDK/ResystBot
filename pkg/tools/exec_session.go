@@ -315,6 +315,11 @@ func (t *ExecSessionTool) waitForExit(session *ExecSession, timeout time.Duratio
 
 	waitDone := make(chan error, 1)
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				waitDone <- fmt.Errorf("panic in session.Cmd.Wait: %v", r)
+			}
+		}()
 		waitDone <- session.Cmd.Wait()
 	}()
 
