@@ -80,15 +80,12 @@ func gatewayCmd() {
 		})
 
 	var skillWatcher *skills.SkillWatcher
-	homeDir, homeErr := os.UserHomeDir()
-	if homeErr != nil {
-		logger.WarnCF("skills", "Failed to resolve home directory", map[string]any{"error": homeErr.Error()})
-	} else if wd, wdErr := os.Getwd(); wdErr != nil {
+	if wd, wdErr := os.Getwd(); wdErr != nil {
 		logger.WarnCF("skills", "Failed to resolve working directory", map[string]any{"error": wdErr.Error()})
 	} else {
 		watcherLoader := skills.NewSkillsLoader(
 			cfg.WorkspacePath(),
-			filepath.Join(homeDir, ".picoclaw", "skills"),
+			filepath.Join(getPicoclawHome(), "skills"),
 			filepath.Join(wd, "skills"),
 		)
 

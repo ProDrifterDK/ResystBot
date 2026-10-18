@@ -195,9 +195,21 @@ func printHelp() {
 	fmt.Println("  version     Show version information")
 }
 
-func getConfigPath() string {
+// getPicoclawHome returns the picoclaw home directory.
+// Priority: $PICOCLAW_HOME > ~/.picoclaw (port of upstream 51e8479f).
+func getPicoclawHome() string {
+	if home := os.Getenv("PICOCLAW_HOME"); home != "" {
+		return home
+	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".picoclaw", "config.json")
+	return filepath.Join(home, ".picoclaw")
+}
+
+func getConfigPath() string {
+	if configPath := os.Getenv("PICOCLAW_CONFIG"); configPath != "" {
+		return configPath
+	}
+	return filepath.Join(getPicoclawHome(), "config.json")
 }
 
 func loadConfig() (*config.Config, error) {

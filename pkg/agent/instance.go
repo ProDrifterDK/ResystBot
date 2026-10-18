@@ -329,9 +329,11 @@ func resolveAgentWorkspace(agentCfg *config.AgentConfig, defaults *config.AgentD
 	if agentCfg == nil || agentCfg.Default || agentCfg.ID == "" || routing.NormalizeAgentID(agentCfg.ID) == "main" {
 		return expandHome(defaults.Workspace)
 	}
-	home, _ := os.UserHomeDir()
+	// For named agents without an explicit workspace, place them next to the
+	// configured default workspace so PICOCLAW_HOME / custom workspaces are
+	// respected (port of upstream 51e8479f).
 	id := routing.NormalizeAgentID(agentCfg.ID)
-	return filepath.Join(home, ".picoclaw", "workspace-"+id)
+	return filepath.Join(expandHome(defaults.Workspace), "..", "workspace-"+id)
 }
 
 // resolveAgentModel resolves the primary model for an agent.
