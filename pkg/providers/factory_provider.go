@@ -84,7 +84,13 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 		if apiBase == "" {
 			apiBase = getDefaultAPIBase(protocol)
 		}
-		return NewHTTPProviderWithMaxTokensFieldAndExtraBody(cfg.APIKey, apiBase, cfg.Proxy, cfg.MaxTokensField, cfg.ExtraBody), modelID, nil
+		return NewHTTPProviderWithMaxTokensFieldAndExtraBody(
+			cfg.APIKey,
+			apiBase,
+			cfg.Proxy,
+			cfg.MaxTokensField,
+			cfg.ExtraBody,
+		), modelID, nil
 
 	case "openrouter", "groq", "zhipu", "gemini", "nvidia",
 		"ollama", "moonshot", "shengsuanyun", "deepseek", "cerebras",
@@ -97,7 +103,13 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 		if apiBase == "" {
 			apiBase = getDefaultAPIBase(protocol)
 		}
-		provider := NewHTTPProviderWithMaxTokensFieldAndExtraBody(cfg.APIKey, apiBase, cfg.Proxy, cfg.MaxTokensField, cfg.ExtraBody)
+		provider := NewHTTPProviderWithMaxTokensFieldAndExtraBody(
+			cfg.APIKey,
+			apiBase,
+			cfg.Proxy,
+			cfg.MaxTokensField,
+			cfg.ExtraBody,
+		)
 		provider.SetProviderName(protocol)
 		return provider, modelID, nil
 
@@ -118,7 +130,13 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 		if cfg.APIKey == "" {
 			return nil, "", fmt.Errorf("api_key is required for anthropic protocol (model: %s)", cfg.Model)
 		}
-		return NewHTTPProviderWithMaxTokensFieldAndExtraBody(cfg.APIKey, apiBase, cfg.Proxy, cfg.MaxTokensField, cfg.ExtraBody), modelID, nil
+		return NewHTTPProviderWithMaxTokensFieldAndExtraBody(
+			cfg.APIKey,
+			apiBase,
+			cfg.Proxy,
+			cfg.MaxTokensField,
+			cfg.ExtraBody,
+		), modelID, nil
 
 	case "antigravity":
 		return NewAntigravityProvider(), modelID, nil

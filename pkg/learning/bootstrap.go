@@ -10,10 +10,10 @@ import (
 )
 
 const (
-	learningBootstrapProbeText     = "learning bootstrap collection dimension probe"
-	maxBootstrapPingRetries        = 5
-	bootstrapPingRetryDelay        = 2 * time.Second
-	bootstrapPingTimeout           = 5 * time.Second
+	learningBootstrapProbeText = "learning bootstrap collection dimension probe"
+	maxBootstrapPingRetries    = 5
+	bootstrapPingRetryDelay    = 2 * time.Second
+	bootstrapPingTimeout       = 5 * time.Second
 )
 
 type runtimeEmbeddingClient interface {
@@ -72,10 +72,18 @@ func InitializeRuntime(ctx context.Context, cfg *config.LearningConfig) (*Runtim
 		}
 	}
 	if embedErr != nil {
-		return nil, fmt.Errorf("learning bootstrap: embedding ping after %d retries: %w", maxBootstrapPingRetries, embedErr)
+		return nil, fmt.Errorf(
+			"learning bootstrap: embedding ping after %d retries: %w",
+			maxBootstrapPingRetries,
+			embedErr,
+		)
 	}
 	if qdrantErr != nil {
-		return nil, fmt.Errorf("learning bootstrap: qdrant ping after %d retries: %w", maxBootstrapPingRetries, qdrantErr)
+		return nil, fmt.Errorf(
+			"learning bootstrap: qdrant ping after %d retries: %w",
+			maxBootstrapPingRetries,
+			qdrantErr,
+		)
 	}
 
 	vector, err := embedder.EmbedForIndexing(ctx, learningBootstrapProbeText)

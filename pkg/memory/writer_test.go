@@ -108,7 +108,10 @@ func TestBuildConversationChunk_DeterministicID(t *testing.T) {
 func TestExtractPairs_PairsUserAssistant(t *testing.T) {
 	messages := []providers.Message{
 		{Role: "user", Content: "What is the MEV bot status?"},
-		{Role: "assistant", Content: "The MEV bot is currently running and profitable. It processed 50 transactions today."},
+		{
+			Role:    "assistant",
+			Content: "The MEV bot is currently running and profitable. It processed 50 transactions today.",
+		},
 		{Role: "user", Content: "ok"},
 		{Role: "assistant", Content: "Let me know if you need anything else."},
 	}
@@ -128,9 +131,16 @@ func TestExtractPairs_PairsUserAssistant(t *testing.T) {
 func TestExtractPairs_CollapsesToolSequences(t *testing.T) {
 	messages := []providers.Message{
 		{Role: "user", Content: "Check the server logs for errors in the deployment"},
-		{Role: "assistant", Content: "", ToolCalls: []protocoltypes.ToolCall{{ID: "1", Function: &protocoltypes.FunctionCall{Name: "exec"}}}},
+		{
+			Role:      "assistant",
+			Content:   "",
+			ToolCalls: []protocoltypes.ToolCall{{ID: "1", Function: &protocoltypes.FunctionCall{Name: "exec"}}},
+		},
 		{Role: "tool", Content: "error: connection timeout", ToolCallID: "1"},
-		{Role: "assistant", Content: "I found a connection timeout error in the deployment logs. The service failed to connect to the database."},
+		{
+			Role:    "assistant",
+			Content: "I found a connection timeout error in the deployment logs. The service failed to connect to the database.",
+		},
 	}
 
 	h := NewWriteHandler(nil, nil)
@@ -180,7 +190,10 @@ func TestBuildSummaryChunk(t *testing.T) {
 	}
 
 	// Deterministic: same session+text = same ID
-	chunk2 := h.BuildSummaryChunk("agent:main:main", "The user discussed MEV bot status and memory system architecture.")
+	chunk2 := h.BuildSummaryChunk(
+		"agent:main:main",
+		"The user discussed MEV bot status and memory system architecture.",
+	)
 	if chunk.ID != chunk2.ID {
 		t.Error("expected deterministic ID for same content")
 	}

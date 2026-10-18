@@ -63,7 +63,11 @@ type clusterLesson struct {
 	sigSet map[string]struct{}
 }
 
-func DryRunLessonClusters(cfg *config.LearningConfig, lessons []LessonRecord, opts ClusterScanOptions) ClusterDryRunResult {
+func DryRunLessonClusters(
+	cfg *config.LearningConfig,
+	lessons []LessonRecord,
+	opts ClusterScanOptions,
+) ClusterDryRunResult {
 	window := opts.Window
 	if window <= 0 {
 		window = defaultClusterWindow

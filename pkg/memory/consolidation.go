@@ -7,10 +7,12 @@ import (
 )
 
 // Compile-time interface compliance checks.
-var _ VectorStore = (*QdrantClient)(nil)
-var _ Embedder = (*EmbeddingClient)(nil)
-var _ LLMCompleter = (*LLMClient)(nil)
-var _ ChunkArchiver = (*ArchiveWriter)(nil)
+var (
+	_ VectorStore   = (*QdrantClient)(nil)
+	_ Embedder      = (*EmbeddingClient)(nil)
+	_ LLMCompleter  = (*LLMClient)(nil)
+	_ ChunkArchiver = (*ArchiveWriter)(nil)
+)
 
 // VectorStore abstracts Qdrant operations for testability.
 type VectorStore interface {
@@ -57,13 +59,13 @@ type NamedPhase struct {
 
 // ConsolidationDeps holds shared dependencies injected into each phase.
 type ConsolidationDeps struct {
-	Store    VectorStore
-	Embedder Embedder
-	LLM      LLMCompleter
-	Archiver ChunkArchiver
-	Config   ConsolidationConfig
+	Store         VectorStore
+	Embedder      Embedder
+	LLM           LLMCompleter
+	Archiver      ChunkArchiver
+	Config        ConsolidationConfig
 	ReflectionDir string
-	DryRun   bool
+	DryRun        bool
 
 	StoreAvailable    bool
 	EmbedderAvailable bool
@@ -146,7 +148,10 @@ func RunConsolidation(ctx context.Context, deps *ConsolidationDeps, phases ...Na
 	}
 
 	if skipped == len(phases) {
-		return stats, fmt.Errorf("no runnable phases: all %d phases skipped due to unavailable dependencies", len(phases))
+		return stats, fmt.Errorf(
+			"no runnable phases: all %d phases skipped due to unavailable dependencies",
+			len(phases),
+		)
 	}
 
 	return stats, nil

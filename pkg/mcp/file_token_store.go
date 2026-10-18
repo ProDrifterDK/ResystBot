@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	mcptransport "github.com/mark3labs/mcp-go/client/transport"
+
 	"github.com/sipeed/picoclaw/pkg/logger"
 )
 
@@ -24,7 +25,7 @@ func NewFileTokenStore(serverName string) (*FileTokenStore, error) {
 	}
 
 	dir := filepath.Join(home, ".picoclaw", "tokens")
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("cannot create token directory: %w", err)
 	}
 
@@ -75,7 +76,7 @@ func (s *FileTokenStore) write() error {
 		return fmt.Errorf("cannot marshal token: %w", err)
 	}
 
-	if err := os.WriteFile(s.filePath, data, 0600); err != nil {
+	if err := os.WriteFile(s.filePath, data, 0o600); err != nil {
 		return fmt.Errorf("cannot write token file: %w", err)
 	}
 

@@ -258,8 +258,8 @@ func TestShellTool_RestrictToWorkspace(t *testing.T) {
 	if !strings.Contains(result.ForLLM, "blocked") && !strings.Contains(result.ForUser, "blocked") {
 		t.Errorf(
 			"Expected 'blocked' message for path traversal, got ForLLM: %s, ForUser: %s",
-		result.ForLLM,
-		result.ForUser,
+			result.ForLLM,
+			result.ForUser,
 		)
 	}
 }

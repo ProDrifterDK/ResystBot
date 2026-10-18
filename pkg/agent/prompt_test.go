@@ -5,8 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/sipeed/picoclaw/pkg/skills"
 	"github.com/stretchr/testify/require"
+
+	"github.com/sipeed/picoclaw/pkg/skills"
 )
 
 func TestBuildSystemPrompt_PromptLayering_ProducesIdenticalOutput(t *testing.T) {

@@ -10,9 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/sipeed/picoclaw/pkg/config"
 )
 
 func TestMatchTool(t *testing.T) {
@@ -297,7 +298,15 @@ func TestExecutorPostToolUseNoError(t *testing.T) {
 	}
 	executor := NewHookExecutor(cfg)
 	assert.NotPanics(t, func() {
-		executor.RunPostToolUse(context.Background(), "Bash", map[string]any{"cmd": "ls"}, "output", true, false, "session1")
+		executor.RunPostToolUse(
+			context.Background(),
+			"Bash",
+			map[string]any{"cmd": "ls"},
+			"output",
+			true,
+			false,
+			"session1",
+		)
 	})
 }
 
@@ -324,7 +333,15 @@ func TestExecutorPostToolUsePassesSuccessSignals(t *testing.T) {
 		},
 	}
 	executor := NewHookExecutor(cfg)
-	executor.RunPostToolUse(context.Background(), "Bash", map[string]any{"command": "ls"}, "output", true, false, "session1")
+	executor.RunPostToolUse(
+		context.Background(),
+		"Bash",
+		map[string]any{"command": "ls"},
+		"output",
+		true,
+		false,
+		"session1",
+	)
 
 	data, err := os.ReadFile(outFile)
 	require.NoError(t, err)
@@ -348,7 +365,15 @@ func TestExecutorPostToolUsePassesErrorSignals(t *testing.T) {
 		},
 	}
 	executor := NewHookExecutor(cfg)
-	executor.RunPostToolUse(context.Background(), "Bash", map[string]any{"command": "ls"}, "tool failed", false, true, "session1")
+	executor.RunPostToolUse(
+		context.Background(),
+		"Bash",
+		map[string]any{"command": "ls"},
+		"tool failed",
+		false,
+		true,
+		"session1",
+	)
 
 	data, err := os.ReadFile(outFile)
 	require.NoError(t, err)

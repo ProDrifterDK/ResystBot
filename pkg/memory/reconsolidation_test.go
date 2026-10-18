@@ -85,7 +85,11 @@ func TestConfirmAndUpdate_WithUpdate(t *testing.T) {
 	h := &ReconsolidationHandler{llm: llm}
 
 	chunk := MemoryChunk{Text: "MEV bot is down"}
-	updatedText, shouldUpdate, err := h.confirmAndUpdate(context.Background(), chunk, "I fixed the bot by switching endpoints")
+	updatedText, shouldUpdate, err := h.confirmAndUpdate(
+		context.Background(),
+		chunk,
+		"I fixed the bot by switching endpoints",
+	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

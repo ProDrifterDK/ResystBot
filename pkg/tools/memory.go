@@ -170,17 +170,24 @@ func parseMemoryOp(m map[string]any) (memoryOp, error) {
 		}
 	case "replace":
 		if oldText == "" {
-			return memoryOp{}, fmt.Errorf("old_text is required for 'replace'; read the file first (recall_memory) to copy the exact text")
+			return memoryOp{}, fmt.Errorf(
+				"old_text is required for 'replace'; read the file first (recall_memory) to copy the exact text",
+			)
 		}
 		if content == "" {
 			return memoryOp{}, fmt.Errorf("content is required for 'replace'")
 		}
 	case "remove":
 		if oldText == "" {
-			return memoryOp{}, fmt.Errorf("old_text is required for 'remove'; read the file first (recall_memory) to copy the exact text")
+			return memoryOp{}, fmt.Errorf(
+				"old_text is required for 'remove'; read the file first (recall_memory) to copy the exact text",
+			)
 		}
 	default:
-		return memoryOp{}, fmt.Errorf("unknown action %q: use add, replace, remove (or 'operations' for a batch)", action)
+		return memoryOp{}, fmt.Errorf(
+			"unknown action %q: use add, replace, remove (or 'operations' for a batch)",
+			action,
+		)
 	}
 	return memoryOp{action: action, content: content, oldText: oldText}, nil
 }
@@ -198,12 +205,16 @@ func applyMemoryOps(content string, ops []memoryOp) (string, error) {
 			}
 		case "replace":
 			if !strings.Contains(content, op.oldText) {
-				return "", fmt.Errorf("old_text not found in memory; read the file first (recall_memory) to copy the exact text")
+				return "", fmt.Errorf(
+					"old_text not found in memory; read the file first (recall_memory) to copy the exact text",
+				)
 			}
 			content = strings.Replace(content, op.oldText, op.content, 1)
 		case "remove":
 			if !strings.Contains(content, op.oldText) {
-				return "", fmt.Errorf("old_text not found in memory; read the file first (recall_memory) to copy the exact text")
+				return "", fmt.Errorf(
+					"old_text not found in memory; read the file first (recall_memory) to copy the exact text",
+				)
 			}
 			content = strings.Replace(content, op.oldText, "", 1)
 		}

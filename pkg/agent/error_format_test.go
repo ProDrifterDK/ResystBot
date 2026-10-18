@@ -7,7 +7,9 @@ import (
 )
 
 func TestFormatProcessingErrorInvalidAPIKey(t *testing.T) {
-	err := errors.New(`LLM call failed after retries: API request failed: Status: 401 Body: {"error":{"message":"Incorrect API key provided"}}`)
+	err := errors.New(
+		`LLM call failed after retries: API request failed: Status: 401 Body: {"error":{"message":"Incorrect API key provided"}}`,
+	)
 	got := formatProcessingError(err)
 	if !strings.Contains(got, "API key appears to be invalid") {
 		t.Fatalf("formatted error missing friendly API key hint: %q", got)

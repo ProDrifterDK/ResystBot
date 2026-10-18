@@ -14,6 +14,7 @@ import (
 	"time"
 
 	sdnotify "github.com/okzk/sdnotify"
+
 	"github.com/sipeed/picoclaw/pkg/agent"
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/channels"
@@ -232,7 +233,13 @@ func gatewayCmd() {
 	fmt.Printf("✓ Health endpoints available at http://%s:%d/health and /ready\n", cfg.Gateway.Host, cfg.Gateway.Port)
 
 	if cfg.Gateway.TransportPort > 0 {
-		transportServer := transport.NewServer(agentLoop, msgBus, "telegram", cfg.Gateway.Host, cfg.Gateway.TransportPort)
+		transportServer := transport.NewServer(
+			agentLoop,
+			msgBus,
+			"telegram",
+			cfg.Gateway.Host,
+			cfg.Gateway.TransportPort,
+		)
 		go func() {
 			if err := transportServer.Start(); err != nil && err != http.ErrServerClosed {
 				logger.ErrorCF("transport", "Transport server error", map[string]any{"error": err.Error()})

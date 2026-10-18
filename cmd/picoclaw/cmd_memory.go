@@ -75,7 +75,13 @@ func memoryIndexCmd() {
 	fmt.Println("OK")
 
 	// Run indexer
-	indexer := memory.NewIndexer(workspace, embedClient, qdrantClient, cfg.Memory.GetMaxChunkTokens(), cfg.Memory.GetIndexDirs())
+	indexer := memory.NewIndexer(
+		workspace,
+		embedClient,
+		qdrantClient,
+		cfg.Memory.GetMaxChunkTokens(),
+		cfg.Memory.GetIndexDirs(),
+	)
 	fmt.Printf("Indexing directories: %v\n", cfg.Memory.GetIndexDirs())
 	if force {
 		fmt.Println("Force mode: re-indexing all files")

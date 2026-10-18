@@ -32,7 +32,10 @@ func transientLLMFailure(err error, model string) (providers.FailoverReason, boo
 		return "", false
 	}
 	switch classifiedErr.Reason {
-	case providers.FailoverTimeout, providers.FailoverNetwork, providers.FailoverRateLimit, providers.FailoverOverloaded:
+	case providers.FailoverTimeout,
+		providers.FailoverNetwork,
+		providers.FailoverRateLimit,
+		providers.FailoverOverloaded:
 		return classifiedErr.Reason, true
 	default:
 		return "", false

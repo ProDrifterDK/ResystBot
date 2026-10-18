@@ -37,12 +37,12 @@ func NewArchiveWriter(basePath string) *ArchiveWriter {
 // WriteRecords appends records to basePath/date/reason.jsonl.
 func (a *ArchiveWriter) WriteRecords(date string, reason string, records []ArchiveRecord) error {
 	dir := filepath.Join(a.basePath, date)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create archive dir %s: %w", dir, err)
 	}
 
 	filePath := filepath.Join(dir, reason+".jsonl")
-	f, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return fmt.Errorf("open archive file %s: %w", filePath, err)
 	}

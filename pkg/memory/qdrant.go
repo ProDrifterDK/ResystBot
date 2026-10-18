@@ -109,8 +109,8 @@ func (q *QdrantClient) EnsureCollection(ctx context.Context, vectorSize int) err
 		{
 			"field_name": "text",
 			"field_schema": map[string]any{
-				"type":     "text",
-				"tokenizer": "word",
+				"type":          "text",
+				"tokenizer":     "word",
 				"min_token_len": 2,
 			},
 		},
@@ -151,7 +151,12 @@ func (q *QdrantClient) Upsert(ctx context.Context, points []QdrantPoint) error {
 }
 
 // Search performs a vector similarity search, optionally filtered by source type.
-func (q *QdrantClient) Search(ctx context.Context, vector []float64, limit int, filter *QdrantFilter) ([]QdrantSearchResult, error) {
+func (q *QdrantClient) Search(
+	ctx context.Context,
+	vector []float64,
+	limit int,
+	filter *QdrantFilter,
+) ([]QdrantSearchResult, error) {
 	url := fmt.Sprintf("%s/collections/%s/points/query", q.baseURL, q.collection)
 
 	body := map[string]any{
@@ -306,7 +311,12 @@ type ScrollPoint struct {
 
 // Scroll fetches points from the collection with pagination.
 // Returns points, next page offset (nil if no more pages), and error.
-func (q *QdrantClient) Scroll(ctx context.Context, limit int, offset *string, withVectors bool) ([]ScrollPoint, *string, error) {
+func (q *QdrantClient) Scroll(
+	ctx context.Context,
+	limit int,
+	offset *string,
+	withVectors bool,
+) ([]ScrollPoint, *string, error) {
 	url := fmt.Sprintf("%s/collections/%s/points/scroll", q.baseURL, q.collection)
 
 	body := map[string]any{

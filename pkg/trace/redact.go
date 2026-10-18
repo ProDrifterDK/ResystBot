@@ -25,7 +25,9 @@ type Redactor struct {
 func NewRedactor() *Redactor {
 	return &Redactor{rules: []replaceRule{
 		{
-			pattern:  regexp.MustCompile(`(?is)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----`),
+			pattern: regexp.MustCompile(
+				`(?is)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----`,
+			),
 			replacer: func(_ []string) string { return RedactedPlaceholder },
 		},
 		{
@@ -33,13 +35,17 @@ func NewRedactor() *Redactor {
 			replacer: func(m []string) string { return m[1] + m[2] + RedactedPlaceholder },
 		},
 		{
-			pattern: regexp.MustCompile(`(?i)\b(export\s+)?([A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|PRIVATE[_-]?KEY|AUTH(?:ORIZATION)?|CREDENTIALS?)[A-Z0-9_]*)(\s*=\s*)([^\s]+)`),
+			pattern: regexp.MustCompile(
+				`(?i)\b(export\s+)?([A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|PRIVATE[_-]?KEY|AUTH(?:ORIZATION)?|CREDENTIALS?)[A-Z0-9_]*)(\s*=\s*)([^\s]+)`,
+			),
 			replacer: func(m []string) string {
 				return m[1] + m[2] + m[3] + RedactedPlaceholder
 			},
 		},
 		{
-			pattern:  regexp.MustCompile(`(?i)(["']?(?:api[_-]?key|apikey|secret|token|password|passwd|auth|credential)["']?\s*[:=]\s*["']?)([^"'\s,}&]+)(["']?)`),
+			pattern: regexp.MustCompile(
+				`(?i)(["']?(?:api[_-]?key|apikey|secret|token|password|passwd|auth|credential)["']?\s*[:=]\s*["']?)([^"'\s,}&]+)(["']?)`,
+			),
 			replacer: func(m []string) string { return m[1] + RedactedPlaceholder + m[3] },
 		},
 		{
@@ -47,7 +53,9 @@ func NewRedactor() *Redactor {
 			replacer: func(m []string) string { return m[1] + RedactedPlaceholder + m[3] },
 		},
 		{
-			pattern:  regexp.MustCompile(`(?i)(^|[\s"'=:(])((?:~?/|/)[^\s"']*(?:\.aws/(?:credentials|config)|\.docker/config\.json|\.git-credentials|\.netrc|\.npmrc|\.pypirc|\.ssh/(?:id_[^\s"']+|config)|[^\s"']*\.(?:pem|p12|pfx|key)))([\s"'):,]|$)`),
+			pattern: regexp.MustCompile(
+				`(?i)(^|[\s"'=:(])((?:~?/|/)[^\s"']*(?:\.aws/(?:credentials|config)|\.docker/config\.json|\.git-credentials|\.netrc|\.npmrc|\.pypirc|\.ssh/(?:id_[^\s"']+|config)|[^\s"']*\.(?:pem|p12|pfx|key)))([\s"'):,]|$)`,
+			),
 			replacer: func(m []string) string { return m[1] + RedactedPlaceholder + m[3] },
 		},
 		{

@@ -130,10 +130,22 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 		return ErrorResult(err.Error())
 	}
 	if len(content) > maxReadFileBytesForLLM {
-		return ErrorResult(fmt.Sprintf("read_file refused to load %s: file is %d bytes, above the %d byte safety limit for LLM context", path, len(content), maxReadFileBytesForLLM))
+		return ErrorResult(
+			fmt.Sprintf(
+				"read_file refused to load %s: file is %d bytes, above the %d byte safety limit for LLM context",
+				path,
+				len(content),
+				maxReadFileBytesForLLM,
+			),
+		)
 	}
 	if !utf8.Valid(content) {
-		return ErrorResult(fmt.Sprintf("read_file refused to load %s: file appears to be binary; use an image/media-aware tool instead of reading raw bytes", path))
+		return ErrorResult(
+			fmt.Sprintf(
+				"read_file refused to load %s: file appears to be binary; use an image/media-aware tool instead of reading raw bytes",
+				path,
+			),
+		)
 	}
 	return NewToolResult(string(content))
 }
@@ -200,7 +212,12 @@ func (t *WriteFileTool) Execute(ctx context.Context, args map[string]any) *ToolR
 	overwrite, _ := args["overwrite"].(bool)
 	if !overwrite {
 		if err := t.fs.Stat(path); err == nil {
-			return ErrorResult(fmt.Sprintf("file: %s already exists. To add to it or change part of it without losing the current contents, use append_file or edit_file. Only set overwrite=true if you intend to replace the entire file.", path))
+			return ErrorResult(
+				fmt.Sprintf(
+					"file: %s already exists. To add to it or change part of it without losing the current contents, use append_file or edit_file. Only set overwrite=true if you intend to replace the entire file.",
+					path,
+				),
+			)
 		}
 	}
 

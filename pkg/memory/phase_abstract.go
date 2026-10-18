@@ -208,7 +208,11 @@ func summarizeCluster(ctx context.Context, llm LLMCompleter, cluster []ScrollPoi
 	}
 
 	systemPrompt := "You are a memory consolidation system. Summarize related memory fragments into a single cohesive chunk. Preserve all key facts, decisions, and context. Be concise."
-	userPrompt := fmt.Sprintf("Summarize the following %d related memory fragments into a single cohesive chunk:\n\n%s", len(cluster), fragments.String())
+	userPrompt := fmt.Sprintf(
+		"Summarize the following %d related memory fragments into a single cohesive chunk:\n\n%s",
+		len(cluster),
+		fragments.String(),
+	)
 
 	return llm.Complete(ctx, systemPrompt, userPrompt)
 }

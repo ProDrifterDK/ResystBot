@@ -24,7 +24,13 @@ type Indexer struct {
 }
 
 // NewIndexer constructs an Indexer.
-func NewIndexer(workspace string, embedder *EmbeddingClient, qdrant *QdrantClient, maxTokens int, indexDirs []string) *Indexer {
+func NewIndexer(
+	workspace string,
+	embedder *EmbeddingClient,
+	qdrant *QdrantClient,
+	maxTokens int,
+	indexDirs []string,
+) *Indexer {
 	return &Indexer{
 		workspace: workspace,
 		embedder:  embedder,
@@ -79,7 +85,11 @@ func (idx *Indexer) IndexAll(ctx context.Context, force bool) (newCount, unchang
 }
 
 // indexFile classifies, chunks, embeds and upserts all chunks of one file.
-func (idx *Indexer) indexFile(ctx context.Context, relPath, content string, force bool) (newCount, unchangedCount, errCount int) {
+func (idx *Indexer) indexFile(
+	ctx context.Context,
+	relPath, content string,
+	force bool,
+) (newCount, unchangedCount, errCount int) {
 	// Normalise path separators for pattern matching (always forward slashes).
 	normPath := filepath.ToSlash(relPath)
 

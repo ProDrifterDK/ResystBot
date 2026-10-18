@@ -152,7 +152,10 @@ func TestNewAgentRegistry_FallbackProvidersUseModelConfigIdentity(t *testing.T) 
 		t.Fatalf("candidate count = %d, want 2", len(agent.Candidates))
 	}
 	if agent.Candidates[0].Provider == agent.Candidates[1].Provider {
-		t.Fatalf("expected distinct provider routing keys for same protocol candidates, got %q", agent.Candidates[0].Provider)
+		t.Fatalf(
+			"expected distinct provider routing keys for same protocol candidates, got %q",
+			agent.Candidates[0].Provider,
+		)
 	}
 
 	for _, candidate := range agent.Candidates {

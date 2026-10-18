@@ -326,6 +326,7 @@ func TestNormalizeModel_UsesAPIBase(t *testing.T) {
 		t.Fatalf("normalizeModel(openrouter) = %q, want %q", got, "openrouter/auto")
 	}
 }
+
 func TestProviderChat_HunterAlpha(t *testing.T) {
 	var requestBody map[string]any
 
@@ -445,7 +446,8 @@ func TestProviderChat_PreservesGeminiThoughtSignatureSnakeCase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
 	}
-	if len(out.ToolCalls) != 1 || out.ToolCalls[0].ExtraContent == nil || out.ToolCalls[0].ExtraContent.Google.ThoughtSignature != "sig-123" {
+	if len(out.ToolCalls) != 1 || out.ToolCalls[0].ExtraContent == nil ||
+		out.ToolCalls[0].ExtraContent.Google.ThoughtSignature != "sig-123" {
 		t.Fatalf("thought signature not parsed: %#v", out.ToolCalls)
 	}
 	serialized, err := json.Marshal([]Message{{Role: "assistant", ToolCalls: out.ToolCalls}})

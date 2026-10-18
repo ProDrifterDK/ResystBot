@@ -20,14 +20,24 @@ func newMockStore(points []ScrollPoint) *mockVectorStore {
 	}
 }
 
-func (m *mockVectorStore) Scroll(ctx context.Context, limit int, offset *string, withVectors bool) ([]ScrollPoint, *string, error) {
+func (m *mockVectorStore) Scroll(
+	ctx context.Context,
+	limit int,
+	offset *string,
+	withVectors bool,
+) ([]ScrollPoint, *string, error) {
 	if offset != nil {
 		return nil, nil, nil
 	}
 	return m.points, nil, nil
 }
 
-func (m *mockVectorStore) Search(ctx context.Context, vector []float64, limit int, filter *QdrantFilter) ([]QdrantSearchResult, error) {
+func (m *mockVectorStore) Search(
+	ctx context.Context,
+	vector []float64,
+	limit int,
+	filter *QdrantFilter,
+) ([]QdrantSearchResult, error) {
 	return m.searchResult, nil
 }
 

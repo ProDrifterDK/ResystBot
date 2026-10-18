@@ -326,7 +326,13 @@ func daemonMode(cfg *config.Config, agentLoop *agent.AgentLoop, msgBus *bus.Mess
 // processChat handles a single chat request in its own goroutine. It builds
 // an InboundMessage, calls the agent loop, emits the response, then drains
 // any pending subagent work.
-func processChat(ctx context.Context, state *daemonState, agentLoop *agent.AgentLoop, channel string, input daemonInput) {
+func processChat(
+	ctx context.Context,
+	state *daemonState,
+	agentLoop *agent.AgentLoop,
+	channel string,
+	input daemonInput,
+) {
 	defer state.removeChat(input.ChatID)
 
 	sessionKey := channel + ":" + input.ChatID
@@ -356,7 +362,12 @@ func processChat(ctx context.Context, state *daemonState, agentLoop *agent.Agent
 	}
 	if response != "" {
 		if u := agentLoop.LastUsage; u != nil {
-			response += fmt.Sprintf("\n\n`in:%d out:%d ctx:%d`", u.PromptTokens, u.CompletionTokens, agentLoop.LastContextEstimate)
+			response += fmt.Sprintf(
+				"\n\n`in:%d out:%d ctx:%d`",
+				u.PromptTokens,
+				u.CompletionTokens,
+				agentLoop.LastContextEstimate,
+			)
 		}
 		emitEvent("response", input.ChatID, response)
 	}

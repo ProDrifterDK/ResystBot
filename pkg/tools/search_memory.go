@@ -74,7 +74,9 @@ func (t *SearchMemoryTool) Execute(ctx context.Context, args map[string]any) *To
 	// --- call retriever ---
 	chunks, err := t.retriever.Search(ctx, query, topK)
 	if err != nil {
-		return ErrorResult(fmt.Sprintf("Memory search unavailable: %v. Use recall_memory with a file path instead.", err))
+		return ErrorResult(
+			fmt.Sprintf("Memory search unavailable: %v. Use recall_memory with a file path instead.", err),
+		)
 	}
 
 	if len(chunks) == 0 {

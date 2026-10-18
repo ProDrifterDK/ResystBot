@@ -19,9 +19,9 @@ func TestRecencyScore(t *testing.T) {
 	const tol = 0.02
 
 	tests := []struct {
-		name    string
+		name     string
 		hoursAgo float64
-		want    float64
+		want     float64
 	}{
 		{"1h", 1, 0.999},
 		{"7d", 24 * 7, 0.846},

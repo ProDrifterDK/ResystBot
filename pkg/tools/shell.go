@@ -383,7 +383,11 @@ func (t *ExecTool) executeBackground(command, cwd string) *ToolResult {
 
 	msg := fmt.Sprintf(
 		"Background process started.\nPID: %s\nStatus: %s\nLog file: %s\n\nThe process is fully detached (setsid). Use `cat %s` to check output, or `kill %s` to stop it.",
-		pid, status, logPath, logPath, pid,
+		pid,
+		status,
+		logPath,
+		logPath,
+		pid,
 	)
 
 	if pidInt, parseErr := strconv.Atoi(pid); parseErr == nil {

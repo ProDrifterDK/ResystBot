@@ -43,7 +43,11 @@ func PhaseReflect(ctx context.Context, deps *ConsolidationDeps, stats *Consolida
 	}
 
 	systemPrompt := "You are a reflective memory system. Analyze the provided memories and identify high-level patterns, insights, and themes. Focus on connections between different topics and actionable observations. Format each insight as a bullet point starting with '- '."
-	userPrompt := fmt.Sprintf("Based on these %d memories, identify 2-3 high-level patterns, insights, or themes:\n\n%s", topK, memoriesText.String())
+	userPrompt := fmt.Sprintf(
+		"Based on these %d memories, identify 2-3 high-level patterns, insights, or themes:\n\n%s",
+		topK,
+		memoriesText.String(),
+	)
 
 	reflection, err := deps.LLM.Complete(ctx, systemPrompt, userPrompt)
 	if err != nil {
@@ -93,12 +97,12 @@ func PhaseReflect(ctx context.Context, deps *ConsolidationDeps, stats *Consolida
 }
 
 func appendReflectionFile(dir string, now time.Time, content string) error {
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 
 	filename := filepath.Join(dir, now.Format("2006-01")+".md")
-	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}

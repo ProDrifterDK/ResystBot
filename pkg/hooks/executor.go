@@ -31,7 +31,12 @@ func (e *HookExecutor) SetTimeout(d time.Duration) {
 	e.timeout = d
 }
 
-func (e *HookExecutor) RunPreToolUse(ctx context.Context, toolName string, toolInput map[string]any, sessionID string) *HookResult {
+func (e *HookExecutor) RunPreToolUse(
+	ctx context.Context,
+	toolName string,
+	toolInput map[string]any,
+	sessionID string,
+) *HookResult {
 	if IsEmpty(e.config) || len(e.config.PreToolUse) == 0 {
 		return &HookResult{Decision: DecisionAllow}
 	}
@@ -81,7 +86,14 @@ func (e *HookExecutor) RunPreToolUse(ctx context.Context, toolName string, toolI
 	return result
 }
 
-func (e *HookExecutor) RunPostToolUse(ctx context.Context, toolName string, toolInput map[string]any, toolResponse string, toolSuccess, toolIsError bool, sessionID string) {
+func (e *HookExecutor) RunPostToolUse(
+	ctx context.Context,
+	toolName string,
+	toolInput map[string]any,
+	toolResponse string,
+	toolSuccess, toolIsError bool,
+	sessionID string,
+) {
 	if IsEmpty(e.config) || len(e.config.PostToolUse) == 0 {
 		return
 	}

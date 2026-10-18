@@ -86,10 +86,16 @@ func (w *TraceWriter) sanitizeTrace(trace *TurnTrace) *TurnTrace {
 	sanitized.UserNextMessage = sanitizeStringPointer(r, sanitized.UserNextMessage, w.config.GetMaxUserMessageChars())
 	for i := range sanitized.ToolCalls {
 		sanitized.ToolCalls[i].Args = sanitizeArgs(r, sanitized.ToolCalls[i].Args, w.config.GetMaxToolArgsChars())
-		sanitized.ToolCalls[i].Result = r.SanitizeString(sanitized.ToolCalls[i].Result, w.config.GetMaxToolResultChars())
+		sanitized.ToolCalls[i].Result = r.SanitizeString(
+			sanitized.ToolCalls[i].Result,
+			w.config.GetMaxToolResultChars(),
+		)
 	}
 	for i := range sanitized.FallbackAttempts {
-		sanitized.FallbackAttempts[i].Error = r.SanitizeString(sanitized.FallbackAttempts[i].Error, w.config.GetMaxErrorMessageChars())
+		sanitized.FallbackAttempts[i].Error = r.SanitizeString(
+			sanitized.FallbackAttempts[i].Error,
+			w.config.GetMaxErrorMessageChars(),
+		)
 	}
 	return sanitized
 }

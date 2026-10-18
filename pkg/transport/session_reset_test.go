@@ -40,7 +40,8 @@ func newResetServer(t *testing.T, provider providers.LLMProvider) (*Server, *htt
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		err := s.Stop(ctx)
-		if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, context.Canceled) &&
+			!errors.Is(err, context.DeadlineExceeded) {
 			t.Errorf("server stop failed: %v", err)
 		}
 	})
@@ -160,7 +161,13 @@ type cancelAwareProvider struct {
 	once     sync.Once
 }
 
-func (p *cancelAwareProvider) Chat(ctx context.Context, _ []providers.Message, _ []providers.ToolDefinition, _ string, _ map[string]any) (*providers.LLMResponse, error) {
+func (p *cancelAwareProvider) Chat(
+	ctx context.Context,
+	_ []providers.Message,
+	_ []providers.ToolDefinition,
+	_ string,
+	_ map[string]any,
+) (*providers.LLMResponse, error) {
 	p.once.Do(func() { close(p.started) })
 	<-ctx.Done()
 	close(p.canceled)
@@ -201,7 +208,13 @@ type delayedCancellationProvider struct {
 	cancelOnce  sync.Once
 }
 
-func (p *delayedCancellationProvider) Chat(ctx context.Context, messages []providers.Message, _ []providers.ToolDefinition, _ string, _ map[string]any) (*providers.LLMResponse, error) {
+func (p *delayedCancellationProvider) Chat(
+	ctx context.Context,
+	messages []providers.Message,
+	_ []providers.ToolDefinition,
+	_ string,
+	_ map[string]any,
+) (*providers.LLMResponse, error) {
 	isBlocked := false
 	for _, msg := range messages {
 		if strings.Contains(msg.Content, "block-a") {
@@ -276,7 +289,13 @@ type predecessorProvider struct {
 	releaseSecond chan struct{}
 }
 
-func (p *predecessorProvider) Chat(ctx context.Context, messages []providers.Message, _ []providers.ToolDefinition, _ string, _ map[string]any) (*providers.LLMResponse, error) {
+func (p *predecessorProvider) Chat(
+	ctx context.Context,
+	messages []providers.Message,
+	_ []providers.ToolDefinition,
+	_ string,
+	_ map[string]any,
+) (*providers.LLMResponse, error) {
 	for i := len(messages) - 1; i >= 0; i-- {
 		msg := messages[i]
 		switch {

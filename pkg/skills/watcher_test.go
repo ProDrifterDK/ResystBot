@@ -55,7 +55,14 @@ func TestWatcherCreateSkill(t *testing.T) {
 	skillDir := filepath.Join(workspace, "skills", "new-skill")
 	require.NoError(t, os.MkdirAll(skillDir, 0o755))
 	time.Sleep(50 * time.Millisecond)
-	require.NoError(t, os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: new-skill\ndescription: test\n---\n\nBody"), 0o644))
+	require.NoError(
+		t,
+		os.WriteFile(
+			filepath.Join(skillDir, "SKILL.md"),
+			[]byte("---\nname: new-skill\ndescription: test\n---\n\nBody"),
+			0o644,
+		),
+	)
 
 	require.Eventually(t, func() bool {
 		mu.Lock()
@@ -81,11 +88,19 @@ func TestWatcherModifySkill(t *testing.T) {
 	})
 	watcher.SetDebounce(100 * time.Millisecond)
 
-	skillFile := writeSkillFile(t, workspace, "existing-skill", "---\nname: existing-skill\ndescription: test\n---\n\nInitial")
+	skillFile := writeSkillFile(
+		t,
+		workspace,
+		"existing-skill",
+		"---\nname: existing-skill\ndescription: test\n---\n\nInitial",
+	)
 	require.NoError(t, watcher.Start())
 	defer watcher.Stop()
 
-	require.NoError(t, os.WriteFile(skillFile, []byte("---\nname: existing-skill\ndescription: test\n---\n\nUpdated"), 0o644))
+	require.NoError(
+		t,
+		os.WriteFile(skillFile, []byte("---\nname: existing-skill\ndescription: test\n---\n\nUpdated"), 0o644),
+	)
 
 	require.Eventually(t, func() bool {
 		mu.Lock()
@@ -109,7 +124,12 @@ func TestWatcherDeleteSkill(t *testing.T) {
 	})
 	watcher.SetDebounce(100 * time.Millisecond)
 
-	skillFile := writeSkillFile(t, workspace, "deleted-skill", "---\nname: deleted-skill\ndescription: test\n---\n\nBody")
+	skillFile := writeSkillFile(
+		t,
+		workspace,
+		"deleted-skill",
+		"---\nname: deleted-skill\ndescription: test\n---\n\nBody",
+	)
 	require.NoError(t, watcher.Start())
 	defer watcher.Stop()
 
@@ -134,12 +154,20 @@ func TestWatcherDebounce(t *testing.T) {
 	})
 	watcher.SetDebounce(200 * time.Millisecond)
 
-	skillFile := writeSkillFile(t, workspace, "debounced-skill", "---\nname: debounced-skill\ndescription: test\n---\n\nInitial")
+	skillFile := writeSkillFile(
+		t,
+		workspace,
+		"debounced-skill",
+		"---\nname: debounced-skill\ndescription: test\n---\n\nInitial",
+	)
 	require.NoError(t, watcher.Start())
 	defer watcher.Stop()
 
 	for i := 0; i < 5; i++ {
-		require.NoError(t, os.WriteFile(skillFile, []byte("---\nname: debounced-skill\ndescription: test\n---\n\nBody"), 0o644))
+		require.NoError(
+			t,
+			os.WriteFile(skillFile, []byte("---\nname: debounced-skill\ndescription: test\n---\n\nBody"), 0o644),
+		)
 		time.Sleep(10 * time.Millisecond)
 	}
 

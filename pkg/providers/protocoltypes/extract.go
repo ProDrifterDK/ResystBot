@@ -6,9 +6,7 @@ import (
 	"strings"
 )
 
-var (
-	xmlToolCallRegex = regexp.MustCompile(`(?s)<tool_call>\s*(.*?)\s*</tool_call>`)
-)
+var xmlToolCallRegex = regexp.MustCompile(`(?s)<tool_call>\s*(.*?)\s*</tool_call>`)
 
 // ExtractToolCallsFromText parses tool call JSON from response text.
 func ExtractToolCallsFromText(text string) []ToolCall {

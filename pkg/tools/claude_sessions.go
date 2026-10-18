@@ -77,5 +77,5 @@ func (s *SessionStore) persist() {
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(s.path, data, 0644)
+	_ = os.WriteFile(s.path, data, 0o644)
 }

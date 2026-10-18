@@ -130,43 +130,55 @@ func TestAllowBlockList(t *testing.T) {
 }
 
 func TestMaxAutoInject(t *testing.T) {
-	engine := newTestTriggerEngine(t, TriggerConfig{Enabled: true, AutoInject: true, MaxAutoInject: 3}, map[string]string{
-		"skill-low-a": strings.Join([]string{
-			"name: skill-low-a",
-			"description: low",
-			"inject:",
-			"  priority: low",
-		}, "\n"),
-		"skill-high-a": strings.Join([]string{
-			"name: skill-high-a",
-			"description: high",
-			"inject:",
-			"  priority: high",
-		}, "\n"),
-		"skill-normal": strings.Join([]string{
-			"name: skill-normal",
-			"description: normal",
-			"inject:",
-			"  priority: normal",
-		}, "\n"),
-		"skill-high-b": strings.Join([]string{
-			"name: skill-high-b",
-			"description: high",
-			"inject:",
-			"  priority: high",
-		}, "\n"),
-		"skill-low-b": strings.Join([]string{
-			"name: skill-low-b",
-			"description: low",
-			"inject:",
-			"  priority: low",
-		}, "\n"),
-	})
+	engine := newTestTriggerEngine(
+		t,
+		TriggerConfig{Enabled: true, AutoInject: true, MaxAutoInject: 3},
+		map[string]string{
+			"skill-low-a": strings.Join([]string{
+				"name: skill-low-a",
+				"description: low",
+				"inject:",
+				"  priority: low",
+			}, "\n"),
+			"skill-high-a": strings.Join([]string{
+				"name: skill-high-a",
+				"description: high",
+				"inject:",
+				"  priority: high",
+			}, "\n"),
+			"skill-normal": strings.Join([]string{
+				"name: skill-normal",
+				"description: normal",
+				"inject:",
+				"  priority: normal",
+			}, "\n"),
+			"skill-high-b": strings.Join([]string{
+				"name: skill-high-b",
+				"description: high",
+				"inject:",
+				"  priority: high",
+			}, "\n"),
+			"skill-low-b": strings.Join([]string{
+				"name: skill-low-b",
+				"description: low",
+				"inject:",
+				"  priority: low",
+			}, "\n"),
+		},
+	)
 
 	matches := engine.MatchSkills(TriggerContext{AgentType: "default"})
 	require.Len(t, matches, 3)
-	assert.Equal(t, []string{"skill-high-a", "skill-high-b", "skill-normal"}, []string{matches[0].Skill.Name, matches[1].Skill.Name, matches[2].Skill.Name})
-	assert.Equal(t, []string{"high", "high", "normal"}, []string{matches[0].Priority, matches[1].Priority, matches[2].Priority})
+	assert.Equal(
+		t,
+		[]string{"skill-high-a", "skill-high-b", "skill-normal"},
+		[]string{matches[0].Skill.Name, matches[1].Skill.Name, matches[2].Skill.Name},
+	)
+	assert.Equal(
+		t,
+		[]string{"high", "high", "normal"},
+		[]string{matches[0].Priority, matches[1].Priority, matches[2].Priority},
+	)
 }
 
 func TestConfigDisabled(t *testing.T) {

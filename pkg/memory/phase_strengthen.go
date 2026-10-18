@@ -26,7 +26,13 @@ func PhaseStrengthen(ctx context.Context, deps *ConsolidationDeps, stats *Consol
 			newImportance = 10
 		}
 
-		log.Printf("[strengthen] %s: importance %d → %d (access_count=%d)", p.ID, p.Payload.Importance, newImportance, p.Payload.AccessCount)
+		log.Printf(
+			"[strengthen] %s: importance %d → %d (access_count=%d)",
+			p.ID,
+			p.Payload.Importance,
+			newImportance,
+			p.Payload.AccessCount,
+		)
 
 		if !deps.DryRun {
 			if err := deps.Store.UpdatePayload(ctx, p.ID, map[string]any{"importance": newImportance}); err != nil {

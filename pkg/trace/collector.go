@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
@@ -72,7 +73,13 @@ func (c *TurnTraceCollector) SetUserFollowup(corrected bool, nextMessage *string
 	c.trace.UserNextMessage = &msg
 }
 
-func (c *TurnTraceCollector) RecordToolCall(name string, args map[string]any, result string, isError bool, durationMs int64) {
+func (c *TurnTraceCollector) RecordToolCall(
+	name string,
+	args map[string]any,
+	result string,
+	isError bool,
+	durationMs int64,
+) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.trace.ToolCalls = append(c.trace.ToolCalls, ToolCallTrace{

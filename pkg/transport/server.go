@@ -120,7 +120,11 @@ func NewServer(agentLoop *agent.AgentLoop, msgBus *bus.MessageBus, channel, host
 }
 
 func (s *Server) Start() error {
-	logger.InfoCF("transport", "Starting HTTP transport server", map[string]any{"addr": s.httpServer.Addr, "channel": s.channel})
+	logger.InfoCF(
+		"transport",
+		"Starting HTTP transport server",
+		map[string]any{"addr": s.httpServer.Addr, "channel": s.channel},
+	)
 	err := s.httpServer.ListenAndServe()
 	if err != nil && err != http.ErrServerClosed {
 		logger.ErrorCF("transport", "HTTP server stopped with error", map[string]any{"error": err.Error()})
@@ -264,7 +268,11 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Name, event.Data); err != nil {
-				logger.WarnCF("transport", "Failed to write SSE event", map[string]any{"stream_id": stream.ID, "error": err.Error()})
+				logger.WarnCF(
+					"transport",
+					"Failed to write SSE event",
+					map[string]any{"stream_id": stream.ID, "error": err.Error()},
+				)
 				s.removeStreamIfCurrent(stream)
 				return
 			}
@@ -275,7 +283,11 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 			}
 		case <-pingTicker.C:
 			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
-				logger.WarnCF("transport", "Failed to write SSE ping", map[string]any{"stream_id": stream.ID, "error": err.Error()})
+				logger.WarnCF(
+					"transport",
+					"Failed to write SSE ping",
+					map[string]any{"stream_id": stream.ID, "error": err.Error()},
+				)
 				s.removeStreamIfCurrent(stream)
 				return
 			}
@@ -315,7 +327,11 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 	if stream != nil {
 		payload, err := json.Marshal(map[string]string{"chat_id": input.ChatID, "text": "cancelled"})
 		if err != nil {
-			logger.ErrorCF("transport", "Failed to marshal cancel event", map[string]any{"error": err.Error(), "chat_id": input.ChatID})
+			logger.ErrorCF(
+				"transport",
+				"Failed to marshal cancel event",
+				map[string]any{"error": err.Error(), "chat_id": input.ChatID},
+			)
 		} else {
 			s.sendStreamEvent(stream, Event{Name: "error", Data: payload})
 		}
@@ -379,7 +395,12 @@ func (s *Server) handleSessionReset(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-run.done:
 		case <-ctx.Done():
-			writeResetError(w, http.StatusConflict, "session_busy", "active session work did not stop before the reset deadline")
+			writeResetError(
+				w,
+				http.StatusConflict,
+				"session_busy",
+				"active session work did not stop before the reset deadline",
+			)
 			return
 		}
 	}
@@ -396,7 +417,12 @@ func (s *Server) handleSessionReset(w http.ResponseWriter, r *http.Request) {
 		case errors.As(err, &unsupported):
 			writeResetError(w, http.StatusNotImplemented, "session_reset_unsupported", "session reset is unsupported")
 		case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
-			writeResetError(w, http.StatusConflict, "session_busy", "session work did not quiesce before the reset deadline")
+			writeResetError(
+				w,
+				http.StatusConflict,
+				"session_busy",
+				"session work did not quiesce before the reset deadline",
+			)
 		default:
 			writeResetError(w, http.StatusInternalServerError, "session_reset_failed", "session reset failed")
 		}
@@ -407,8 +433,13 @@ func (s *Server) handleSessionReset(w http.ResponseWriter, r *http.Request) {
 	if input.Mode == agent.ResetModeHard {
 		expectedAction = "cleared"
 	}
-	if result == nil || result.SessionKey == "" || result.ClearedMessages < 0 || result.SummaryAction != expectedAction {
-		logger.ErrorCF("transport", "Session reset returned an invalid result", map[string]any{"chat_id": input.ChatID, "mode": input.Mode})
+	if result == nil || result.SessionKey == "" || result.ClearedMessages < 0 ||
+		result.SummaryAction != expectedAction {
+		logger.ErrorCF(
+			"transport",
+			"Session reset returned an invalid result",
+			map[string]any{"chat_id": input.ChatID, "mode": input.Mode},
+		)
 		writeResetError(w, http.StatusInternalServerError, "session_reset_failed", "session reset failed")
 		return
 	}
@@ -463,7 +494,11 @@ func (s *Server) processMessage(ctx context.Context, run *chatRun, input message
 		return
 	}
 	if s.agentLoop == nil {
-		s.sendJSONEvent(run.stream, "error", map[string]string{"chat_id": input.ChatID, "text": "agent loop unavailable"})
+		s.sendJSONEvent(
+			run.stream,
+			"error",
+			map[string]string{"chat_id": input.ChatID, "text": "agent loop unavailable"},
+		)
 		return
 	}
 
@@ -479,7 +514,12 @@ func (s *Server) processMessage(ctx context.Context, run *chatRun, input message
 
 	if response != "" {
 		if al := s.agentLoop; al.LastUsage != nil {
-			response += fmt.Sprintf("\n\n`in:%d out:%d ctx:%d`", al.LastUsage.PromptTokens, al.LastUsage.CompletionTokens, al.LastContextEstimate)
+			response += fmt.Sprintf(
+				"\n\n`in:%d out:%d ctx:%d`",
+				al.LastUsage.PromptTokens,
+				al.LastUsage.CompletionTokens,
+				al.LastContextEstimate,
+			)
 		}
 		s.sendJSONEvent(run.stream, "response", map[string]string{"chat_id": input.ChatID, "text": response})
 	}
@@ -634,7 +674,11 @@ func (s *Server) snapshotStreamIDs() []string {
 func (s *Server) sendJSONEvent(stream *Stream, name string, payload any) {
 	data, err := json.Marshal(payload)
 	if err != nil {
-		logger.ErrorCF("transport", "Failed to marshal event", map[string]any{"name": name, "error": err.Error(), "stream_id": stream.ID})
+		logger.ErrorCF(
+			"transport",
+			"Failed to marshal event",
+			map[string]any{"name": name, "error": err.Error(), "stream_id": stream.ID},
+		)
 		return
 	}
 	s.sendStreamEvent(stream, Event{Name: name, Data: data})
@@ -643,7 +687,11 @@ func (s *Server) sendJSONEvent(stream *Stream, name string, payload any) {
 func (s *Server) sendStreamEvent(stream *Stream, event Event) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			logger.WarnCF("transport", "Dropped event for closed stream", map[string]any{"stream_id": stream.ID, "event": event.Name})
+			logger.WarnCF(
+				"transport",
+				"Dropped event for closed stream",
+				map[string]any{"stream_id": stream.ID, "event": event.Name},
+			)
 		}
 	}()
 

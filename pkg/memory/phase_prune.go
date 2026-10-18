@@ -39,7 +39,12 @@ func PhasePrune(ctx context.Context, deps *ConsolidationDeps, stats *Consolidati
 		}
 
 		if p.Payload.DecayScore < deps.Config.PruneScoreThreshold {
-			log.Printf("[prune] %s: decay_score=%.4f (threshold=%.4f)", p.ID, p.Payload.DecayScore, deps.Config.PruneScoreThreshold)
+			log.Printf(
+				"[prune] %s: decay_score=%.4f (threshold=%.4f)",
+				p.ID,
+				p.Payload.DecayScore,
+				deps.Config.PruneScoreThreshold,
+			)
 			toPrune = append(toPrune, p)
 		}
 	}

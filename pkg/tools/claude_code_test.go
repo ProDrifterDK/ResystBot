@@ -186,7 +186,7 @@ func TestClaudeCodeTool_EnsureDelegationFile_NoOverwrite(t *testing.T) {
 	delegationPath := filepath.Join(dir, "DELEGATION.md")
 
 	// Write a custom file first
-	os.WriteFile(delegationPath, []byte("custom rules"), 0644)
+	os.WriteFile(delegationPath, []byte("custom rules"), 0o644)
 
 	// Constructor calls ensureDefaults() — it should not overwrite
 	_ = NewClaudeCodeTool(ClaudeCodeToolConfig{

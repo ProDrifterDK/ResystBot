@@ -7,6 +7,7 @@ import (
 
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	mcptransport "github.com/mark3labs/mcp-go/client/transport"
+
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/logger"
 )
@@ -51,7 +52,13 @@ func AuthorizeOAuth(ctx context.Context, serverURL string, cfg config.MCPOAuthCo
 	return runOAuthFlow(ctx, serverURL, cfg, serverName, tokenStore)
 }
 
-func runOAuthFlow(ctx context.Context, serverURL string, cfg config.MCPOAuthConfig, serverName string, tokenStore *FileTokenStore) error {
+func runOAuthFlow(
+	ctx context.Context,
+	serverURL string,
+	cfg config.MCPOAuthConfig,
+	serverName string,
+	tokenStore *FileTokenStore,
+) error {
 	oauthCfg := mcptransport.OAuthConfig{
 		TokenStore:  tokenStore,
 		RedirectURI: cfg.RedirectURI,

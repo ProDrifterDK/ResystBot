@@ -126,7 +126,11 @@ func TestDryRunLessonClustersDisabledByDefault(t *testing.T) {
 		t.Fatalf("expected no clusters when disabled, got %d", len(result.Clusters))
 	}
 	if result.ScannedLessons != 0 || result.MatchedLessons != 0 {
-		t.Fatalf("disabled result should not scan lessons, got scanned=%d matched=%d", result.ScannedLessons, result.MatchedLessons)
+		t.Fatalf(
+			"disabled result should not scan lessons, got scanned=%d matched=%d",
+			result.ScannedLessons,
+			result.MatchedLessons,
+		)
 	}
 
 	result = DryRunLessonClusters(nil, lessons, ClusterScanOptions{Topic: "docker"})

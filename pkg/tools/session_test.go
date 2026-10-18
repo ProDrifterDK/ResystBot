@@ -56,7 +56,9 @@ func TestSessionManager_KillSession(t *testing.T) {
 	})
 
 	mgr := NewSessionManager()
-	session, err := mgr.CreateSession(&ExecSession{Cmd: cmd, PID: cmd.Process.Pid, Output: &bytes.Buffer{}, State: SessionRunning})
+	session, err := mgr.CreateSession(
+		&ExecSession{Cmd: cmd, PID: cmd.Process.Pid, Output: &bytes.Buffer{}, State: SessionRunning},
+	)
 	if err != nil {
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
@@ -96,7 +98,9 @@ func TestSessionManager_CleanupOldest(t *testing.T) {
 func TestSessionManager_MaxSessions(t *testing.T) {
 	mgr := NewSessionManager(2)
 	for i := 0; i < 3; i++ {
-		_, err := mgr.CreateSession(&ExecSession{Output: &bytes.Buffer{}, CreatedAt: time.Now().Add(time.Duration(i) * time.Second)})
+		_, err := mgr.CreateSession(
+			&ExecSession{Output: &bytes.Buffer{}, CreatedAt: time.Now().Add(time.Duration(i) * time.Second)},
+		)
 		if err != nil {
 			t.Fatalf("CreateSession #%d returned error: %v", i, err)
 		}

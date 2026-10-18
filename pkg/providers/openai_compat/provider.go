@@ -43,7 +43,10 @@ func NewProviderWithMaxTokensField(apiKey, apiBase, proxy, maxTokensField string
 	return NewProviderWithMaxTokensFieldAndExtraBody(apiKey, apiBase, proxy, maxTokensField, nil)
 }
 
-func NewProviderWithMaxTokensFieldAndExtraBody(apiKey, apiBase, proxy, maxTokensField string, extraBody map[string]any) *Provider {
+func NewProviderWithMaxTokensFieldAndExtraBody(
+	apiKey, apiBase, proxy, maxTokensField string,
+	extraBody map[string]any,
+) *Provider {
 	client := &http.Client{
 		Timeout: 0,
 	}
@@ -109,7 +112,8 @@ func (p *Provider) Chat(
 
 	// For Ollama (detected by API key, base URL, or model name), we must forcefully inject num_ctx
 	// otherwise it defaults to 2048 tokens, silently truncating long conversation histories.
-	if strings.Contains(p.apiBase, "11434") || p.apiKey == "ollama" || strings.Contains(strings.ToLower(model), "ollama") {
+	if strings.Contains(p.apiBase, "11434") || p.apiKey == "ollama" ||
+		strings.Contains(strings.ToLower(model), "ollama") {
 		numCtx := 8192
 		if cw, ok := asInt(options["context_window"]); ok && cw > 0 {
 			numCtx = cw

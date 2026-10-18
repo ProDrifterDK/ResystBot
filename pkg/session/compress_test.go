@@ -183,7 +183,10 @@ func TestCompressStripsReasoningFromOldButPreservesMostRecent(t *testing.T) {
 	// Recent assistant message should keep reasoning
 	recentAssistantIdx := 2 // index in result (1 old + index 1 in recent)
 	if result[recentAssistantIdx].ReasoningContent != "new reasoning" {
-		t.Errorf("Expected most recent assistant to keep reasoning, got: %q", result[recentAssistantIdx].ReasoningContent)
+		t.Errorf(
+			"Expected most recent assistant to keep reasoning, got: %q",
+			result[recentAssistantIdx].ReasoningContent,
+		)
 	}
 }
 

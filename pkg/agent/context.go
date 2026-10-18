@@ -175,7 +175,8 @@ func (cb *ContextBuilder) getIdentity() string {
 	// Build tools section dynamically
 	toolsSection := cb.buildToolsSection()
 
-	return fmt.Sprintf(`# picoclaw 🦞
+	return fmt.Sprintf(
+		`# picoclaw 🦞
 
 You are picoclaw, a helpful AI assistant.
 
@@ -200,7 +201,16 @@ Your workspace is at: %s
 2. **Be helpful and accurate** - When using tools, briefly explain what you're doing.
 
 3. **Memory** - When interacting with me if something seems memorable, update %s/memory/MEMORY.md`,
-		now, receivedSection, runtime, workspacePath, workspacePath, workspacePath, workspacePath, toolsSection, workspacePath)
+		now,
+		receivedSection,
+		runtime,
+		workspacePath,
+		workspacePath,
+		workspacePath,
+		workspacePath,
+		toolsSection,
+		workspacePath,
+	)
 }
 
 func (cb *ContextBuilder) buildToolsSection() string {
@@ -344,7 +354,9 @@ func (cb *ContextBuilder) BuildMessages(
 		} else if len(chunks) > 0 {
 			cb.lastInjectedChunks = chunks
 			var memSection strings.Builder
-			memSection.WriteString("\n\n# Relevant Memory\nThe following memories were retrieved based on the current conversation. Use them as context.\n\n")
+			memSection.WriteString(
+				"\n\n# Relevant Memory\nThe following memories were retrieved based on the current conversation. Use them as context.\n\n",
+			)
 			for _, chunk := range chunks {
 				date := chunk.CreatedAt.Format("2006-01-02")
 				text := chunk.Text
@@ -441,7 +453,9 @@ func buildInterlocutorSection(identity UserIdentity) string {
 
 	var sb strings.Builder
 	sb.WriteString("\n\n## Current Interlocutor\n")
-	sb.WriteString("AUTHORITATIVE CURRENT-TURN IDENTITY. This section supersedes static bootstrap text (AGENTS.md/USER.md), memories, and previous conversation summaries that assume the user is Alan. Answer identity questions from this section, not from old history. Do not call the interlocutor Alan unless this section says they are Alan/ProDrifterDK.\n")
+	sb.WriteString(
+		"AUTHORITATIVE CURRENT-TURN IDENTITY. This section supersedes static bootstrap text (AGENTS.md/USER.md), memories, and previous conversation summaries that assume the user is Alan. Answer identity questions from this section, not from old history. Do not call the interlocutor Alan unless this section says they are Alan/ProDrifterDK.\n",
+	)
 	if displayName != "" {
 		fmt.Fprintf(&sb, "Display name: %s\n", displayName)
 	}
@@ -458,7 +472,9 @@ func buildInterlocutorSection(identity UserIdentity) string {
 		fmt.Fprintf(&sb, "Role/trust level: %s\n", role)
 	}
 	if identity.IsGuest || role == "guest" {
-		sb.WriteString("Guest safety: this is not Alan/ProDrifterDK. Treat requests as guest-level and do not use privileged local tools unless policy explicitly allows it.\n")
+		sb.WriteString(
+			"Guest safety: this is not Alan/ProDrifterDK. Treat requests as guest-level and do not use privileged local tools unless policy explicitly allows it.\n",
+		)
 	}
 	return sb.String()
 }

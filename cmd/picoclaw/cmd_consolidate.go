@@ -85,7 +85,11 @@ func consolidateCmd() {
 	}
 
 	allPhases := []memory.NamedPhase{
-		{Name: "abstract", Fn: memory.PhaseAbstract, Deps: memory.PhaseDeps{Store: true, Embedder: true, LLM: true, Archiver: true}},
+		{
+			Name: "abstract",
+			Fn:   memory.PhaseAbstract,
+			Deps: memory.PhaseDeps{Store: true, Embedder: true, LLM: true, Archiver: true},
+		},
 		{Name: "strengthen", Fn: memory.PhaseStrengthen, Deps: memory.PhaseDeps{Store: true}},
 		{Name: "score", Fn: memory.PhaseScore, Deps: memory.PhaseDeps{Store: true}},
 		{Name: "prune", Fn: memory.PhasePrune, Deps: memory.PhaseDeps{Store: true, Archiver: true}},

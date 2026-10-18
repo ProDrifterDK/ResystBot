@@ -249,14 +249,18 @@ func (fc *FallbackChain) Execute(
 			}
 
 			if shouldRetryCandidate(failErr.Reason) && attempt < transientCandidateRetries {
-				logger.WarnCF("fallback", "Transient provider error, retrying candidate before cooldown", map[string]any{
-					"provider": candidate.Provider,
-					"model":    candidate.Model,
-					"reason":   failErr.Reason,
-					"attempt":  attempt + 1,
-					"max":      transientCandidateRetries + 1,
-					"error":    failErr.Error(),
-				})
+				logger.WarnCF(
+					"fallback",
+					"Transient provider error, retrying candidate before cooldown",
+					map[string]any{
+						"provider": candidate.Provider,
+						"model":    candidate.Model,
+						"reason":   failErr.Reason,
+						"attempt":  attempt + 1,
+						"max":      transientCandidateRetries + 1,
+						"error":    failErr.Error(),
+					},
+				)
 				if waitErr := waitBeforeCandidateRetry(ctx, attempt); waitErr != nil {
 					return nil, waitErr
 				}
@@ -345,12 +349,15 @@ func (fc *FallbackChain) ExecuteWithValidator(
 				fc.cooldown.MarkSuccess(cooldownKey)
 
 				if validator != nil && !validator(resp) {
-					logger.WarnCF("fallback", fmt.Sprintf("Provider %s model %s returned unacceptable response, trying next fallback",
-						candidate.Provider, candidate.Model),
+					logger.WarnCF(
+						"fallback",
+						fmt.Sprintf("Provider %s model %s returned unacceptable response, trying next fallback",
+							candidate.Provider, candidate.Model),
 						map[string]any{
 							"provider": candidate.Provider,
 							"model":    candidate.Model,
-						})
+						},
+					)
 					result.Attempts = append(result.Attempts, FallbackAttempt{
 						Provider: candidate.Provider,
 						Model:    candidate.Model,
@@ -407,14 +414,18 @@ func (fc *FallbackChain) ExecuteWithValidator(
 			}
 
 			if shouldRetryCandidate(failErr.Reason) && attempt < transientCandidateRetries {
-				logger.WarnCF("fallback", "Transient provider error, retrying candidate before cooldown", map[string]any{
-					"provider": candidate.Provider,
-					"model":    candidate.Model,
-					"reason":   failErr.Reason,
-					"attempt":  attempt + 1,
-					"max":      transientCandidateRetries + 1,
-					"error":    failErr.Error(),
-				})
+				logger.WarnCF(
+					"fallback",
+					"Transient provider error, retrying candidate before cooldown",
+					map[string]any{
+						"provider": candidate.Provider,
+						"model":    candidate.Model,
+						"reason":   failErr.Reason,
+						"attempt":  attempt + 1,
+						"max":      transientCandidateRetries + 1,
+						"error":    failErr.Error(),
+					},
+				)
 				if waitErr := waitBeforeCandidateRetry(ctx, attempt); waitErr != nil {
 					return nil, waitErr
 				}
@@ -434,11 +445,14 @@ func (fc *FallbackChain) ExecuteWithValidator(
 
 		if i == len(candidates)-1 {
 			if lastValidatorReject != nil {
-				logger.WarnCF("fallback", "All candidates exhausted; returning last unacceptable response as last resort",
+				logger.WarnCF(
+					"fallback",
+					"All candidates exhausted; returning last unacceptable response as last resort",
 					map[string]any{
 						"provider": lastValidatorReject.Provider,
 						"model":    lastValidatorReject.Model,
-					})
+					},
+				)
 				return lastValidatorReject, nil
 			}
 			return nil, &FallbackExhaustedError{Attempts: result.Attempts}
@@ -446,11 +460,14 @@ func (fc *FallbackChain) ExecuteWithValidator(
 	}
 
 	if lastValidatorReject != nil {
-		logger.WarnCF("fallback", "All candidates exhausted (skipped/validator); returning last unacceptable response as last resort",
+		logger.WarnCF(
+			"fallback",
+			"All candidates exhausted (skipped/validator); returning last unacceptable response as last resort",
 			map[string]any{
 				"provider": lastValidatorReject.Provider,
 				"model":    lastValidatorReject.Model,
-			})
+			},
+		)
 		return lastValidatorReject, nil
 	}
 

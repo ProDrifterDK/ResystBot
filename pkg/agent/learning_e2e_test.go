@@ -39,7 +39,12 @@ func newLearningE2EStore() *learningE2EStore {
 	}
 }
 
-func (s *learningE2EStore) Search(ctx context.Context, vector []float64, limit int, filter *memory.QdrantFilter) ([]memory.QdrantSearchResult, error) {
+func (s *learningE2EStore) Search(
+	ctx context.Context,
+	vector []float64,
+	limit int,
+	filter *memory.QdrantFilter,
+) ([]memory.QdrantSearchResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -146,7 +151,13 @@ type promptCapturingProvider struct {
 	messages [][]providers.Message
 }
 
-func (p *promptCapturingProvider) Chat(ctx context.Context, messages []providers.Message, tools []providers.ToolDefinition, model string, opts map[string]any) (*providers.LLMResponse, error) {
+func (p *promptCapturingProvider) Chat(
+	ctx context.Context,
+	messages []providers.Message,
+	tools []providers.ToolDefinition,
+	model string,
+	opts map[string]any,
+) (*providers.LLMResponse, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	cloned := make([]providers.Message, len(messages))
@@ -211,7 +222,13 @@ func TestAgentLoop_LearningEndToEnd_PersistsRetrievesAndUpdatesDuplicate(t *test
 	firstLoop := NewAgentLoop(cfg, bus.NewMessageBus(), firstProvider)
 	firstLoop.RegisterTool(&failingTraceTool{})
 
-	response, err := firstLoop.ProcessDirectWithChannel(context.Background(), "install this python package in the current environment", "learning-session-1", "test", "chat-1")
+	response, err := firstLoop.ProcessDirectWithChannel(
+		context.Background(),
+		"install this python package in the current environment",
+		"learning-session-1",
+		"test",
+		"chat-1",
+	)
 	if err != nil {
 		t.Fatalf("first ProcessDirectWithChannel() error = %v", err)
 	}
@@ -244,7 +261,13 @@ func TestAgentLoop_LearningEndToEnd_PersistsRetrievesAndUpdatesDuplicate(t *test
 	secondProvider := &promptCapturingProvider{response: "second answer with learning"}
 	secondLoop := NewAgentLoop(cfg, bus.NewMessageBus(), secondProvider)
 
-	response, err = secondLoop.ProcessDirectWithChannel(context.Background(), "install this package safely on Pop!_OS", "learning-session-2", "test", "chat-2")
+	response, err = secondLoop.ProcessDirectWithChannel(
+		context.Background(),
+		"install this package safely on Pop!_OS",
+		"learning-session-2",
+		"test",
+		"chat-2",
+	)
 	if err != nil {
 		t.Fatalf("second ProcessDirectWithChannel() error = %v", err)
 	}
@@ -283,7 +306,13 @@ func TestAgentLoop_LearningEndToEnd_PersistsRetrievesAndUpdatesDuplicate(t *test
 	thirdLoop := NewAgentLoop(cfg, bus.NewMessageBus(), thirdProvider)
 	thirdLoop.RegisterTool(&failingTraceTool{})
 
-	response, err = thirdLoop.ProcessDirectWithChannel(context.Background(), "install this python package in the current environment", "learning-session-3", "test", "chat-3")
+	response, err = thirdLoop.ProcessDirectWithChannel(
+		context.Background(),
+		"install this python package in the current environment",
+		"learning-session-3",
+		"test",
+		"chat-3",
+	)
 	if err != nil {
 		t.Fatalf("third ProcessDirectWithChannel() error = %v", err)
 	}
@@ -324,7 +353,13 @@ func TestAgentLoop_LearningRuntimeUnavailableDoesNotBreakChat(t *testing.T) {
 	provider := &promptCapturingProvider{response: "chat still succeeds"}
 	al := NewAgentLoop(cfg, bus.NewMessageBus(), provider)
 
-	response, err := al.ProcessDirectWithChannel(context.Background(), "explain the package failure without crashing chat", "learning-resilience-session", "test", "chat-resilience")
+	response, err := al.ProcessDirectWithChannel(
+		context.Background(),
+		"explain the package failure without crashing chat",
+		"learning-resilience-session",
+		"test",
+		"chat-resilience",
+	)
 	if err != nil {
 		t.Fatalf("ProcessDirectWithChannel() error = %v", err)
 	}

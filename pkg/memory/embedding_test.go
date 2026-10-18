@@ -35,8 +35,8 @@ func makeEmbeddingHandler(t *testing.T, wantModel string, wantInputs []string) h
 		}
 
 		var body struct {
-			Model string      `json:"model"`
-			Input interface{} `json:"input"`
+			Model string `json:"model"`
+			Input any    `json:"input"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Errorf("failed to decode request body: %v", err)
@@ -53,7 +53,7 @@ func makeEmbeddingHandler(t *testing.T, wantModel string, wantInputs []string) h
 		switch v := body.Input.(type) {
 		case string:
 			inputs = []string{v}
-		case []interface{}:
+		case []any:
 			for _, item := range v {
 				s, ok := item.(string)
 				if !ok {

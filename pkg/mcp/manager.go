@@ -86,7 +86,11 @@ func NewManager(ctx context.Context, mcpCfg config.MCPConfig) (*Manager, error) 
 	return m, nil
 }
 
-func (m *Manager) connectServer(ctx context.Context, name string, cfg config.MCPServerConfig) (*ServerConnection, error) {
+func (m *Manager) connectServer(
+	ctx context.Context,
+	name string,
+	cfg config.MCPServerConfig,
+) (*ServerConnection, error) {
 	connCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
@@ -252,7 +256,11 @@ func (m *Manager) GetToolsForServers(serverNames []string) map[string][]mcpgo.To
 	return result
 }
 
-func (m *Manager) CallTool(ctx context.Context, serverName, toolName string, args map[string]any) (*mcpgo.CallToolResult, error) {
+func (m *Manager) CallTool(
+	ctx context.Context,
+	serverName, toolName string,
+	args map[string]any,
+) (*mcpgo.CallToolResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -360,13 +368,23 @@ func (m *Manager) Reconnect(ctx context.Context, serverName string) error {
 	return m.reconnectConnection(ctx, serverName, conn, conn.currentReconnectVersion())
 }
 
-func (m *Manager) reconnectConnection(ctx context.Context, serverName string, conn *ServerConnection, reconnectVersion uint64) error {
+func (m *Manager) reconnectConnection(
+	ctx context.Context,
+	serverName string,
+	conn *ServerConnection,
+	reconnectVersion uint64,
+) error {
 	conn.callMu.Lock()
 	defer conn.callMu.Unlock()
 	return m.reconnectConnectionLocked(ctx, serverName, conn, reconnectVersion)
 }
 
-func (m *Manager) reconnectConnectionLocked(ctx context.Context, serverName string, conn *ServerConnection, reconnectVersion uint64) error {
+func (m *Manager) reconnectConnectionLocked(
+	ctx context.Context,
+	serverName string,
+	conn *ServerConnection,
+	reconnectVersion uint64,
+) error {
 	conn.reconnectMu.Lock()
 	defer conn.reconnectMu.Unlock()
 
@@ -684,7 +702,12 @@ func newHTTPClient(cfg config.MCPServerConfig, serverName string) (*mcpclient.Cl
 	return client, nil
 }
 
-func authorizeWithHandler(ctx context.Context, cfg config.MCPServerConfig, serverName string, handler *mcptransport.OAuthHandler) error {
+func authorizeWithHandler(
+	ctx context.Context,
+	cfg config.MCPServerConfig,
+	serverName string,
+	handler *mcptransport.OAuthHandler,
+) error {
 	if _, err := handler.GetServerMetadata(ctx); err != nil {
 		logger.WarnCF("mcp-oauth", "Server metadata discovery failed", map[string]any{
 			"server": serverName,

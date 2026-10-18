@@ -9,10 +9,10 @@ import (
 
 // Source type constants
 const (
-	SourceTypeMemoryFile  = "memory_file"
-	SourceTypeMindDoc     = "mind_doc"
+	SourceTypeMemoryFile   = "memory_file"
+	SourceTypeMindDoc      = "mind_doc"
 	SourceTypeConversation = "conversation"
-	SourceTypeDailyNote   = "daily_note"
+	SourceTypeDailyNote    = "daily_note"
 )
 
 // Chunk type constants
@@ -34,14 +34,14 @@ const (
 
 // MemoryChunk represents a memory unit.
 type MemoryChunk struct {
-	ID         string
-	Text       string
-	Source     string
-	SourceType string
-	ChunkType  string
-	Importance int
-	CreatedAt  time.Time
-	Tags       []string
+	ID          string
+	Text        string
+	Source      string
+	SourceType  string
+	ChunkType   string
+	Importance  int
+	CreatedAt   time.Time
+	Tags        []string
 	FinalScore  float64
 	Vector      []float64
 	AccessCount int
@@ -49,17 +49,17 @@ type MemoryChunk struct {
 
 // QdrantPayload holds metadata stored in Qdrant.
 type QdrantPayload struct {
-	Text        string   `json:"text"`
-	Source      string   `json:"source"`
-	SourceType  string   `json:"source_type"`
-	ChunkType   string   `json:"chunk_type"`
-	Importance  int      `json:"importance"`
-	AccessCount int      `json:"access_count"`
-	CreatedAt   string   `json:"created_at"`
-	LastAccessed string  `json:"last_accessed"`
-	Tags        []string `json:"tags"`
-	MergedFrom  []string `json:"merged_from,omitempty"`
-	DecayScore  float64  `json:"decay_score"`
+	Text         string   `json:"text"`
+	Source       string   `json:"source"`
+	SourceType   string   `json:"source_type"`
+	ChunkType    string   `json:"chunk_type"`
+	Importance   int      `json:"importance"`
+	AccessCount  int      `json:"access_count"`
+	CreatedAt    string   `json:"created_at"`
+	LastAccessed string   `json:"last_accessed"`
+	Tags         []string `json:"tags"`
+	MergedFrom   []string `json:"merged_from,omitempty"`
+	DecayScore   float64  `json:"decay_score"`
 }
 
 // Keyword lists for importance scoring

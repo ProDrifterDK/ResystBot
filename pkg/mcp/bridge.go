@@ -132,7 +132,9 @@ func (b *MCPToolBridge) Execute(ctx context.Context, args map[string]any) *tools
 
 	if !connected {
 		if err := b.manager.Reconnect(ctx, b.serverName); err != nil {
-			return tools.ErrorResult(fmt.Sprintf("MCP server %q not connected and reconnection failed: %v", b.serverName, err))
+			return tools.ErrorResult(
+				fmt.Sprintf("MCP server %q not connected and reconnection failed: %v", b.serverName, err),
+			)
 		}
 	}
 
@@ -148,7 +150,8 @@ func (b *MCPToolBridge) Execute(ctx context.Context, args map[string]any) *tools
 		})
 
 		if ctx.Err() != nil {
-			return tools.ErrorResult(fmt.Sprintf("MCP tool %q timed out after %v", b.mcpTool.Name, timeout)).WithError(ctx.Err())
+			return tools.ErrorResult(fmt.Sprintf("MCP tool %q timed out after %v", b.mcpTool.Name, timeout)).
+				WithError(ctx.Err())
 		}
 
 		if isConnectionError(err) {
@@ -156,7 +159,8 @@ func (b *MCPToolBridge) Execute(ctx context.Context, args map[string]any) *tools
 			return tools.ErrorResult(fmt.Sprintf("MCP server %q connection lost: %v", b.serverName, err)).WithError(err)
 		}
 
-		return tools.ErrorResult(fmt.Sprintf("MCP tool %q on server %q failed: %v", b.mcpTool.Name, b.serverName, err)).WithError(err)
+		return tools.ErrorResult(fmt.Sprintf("MCP tool %q on server %q failed: %v", b.mcpTool.Name, b.serverName, err)).
+			WithError(err)
 	}
 
 	return b.convertMCPResult(result)
@@ -304,7 +308,8 @@ func (b *MCPToolBridge) persistLargeTextArtifact(text string, isError bool) *too
 			"[MCP returned a large text result (%d chars); omitted from model context and saved as a local artifact.]\n"+
 				"Local artifact path: [file:%s]\n"+
 				"Use the read_file or exec tools to inspect it.",
-			size, path,
+			size,
+			path,
 		),
 		IsError: isError,
 	}

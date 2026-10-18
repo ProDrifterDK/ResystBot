@@ -52,7 +52,8 @@ func newTestServer(t *testing.T, withAgentLoop bool) (*Server, *httptest.Server)
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		err := s.Stop(ctx)
-		if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, context.Canceled) &&
+			!errors.Is(err, context.DeadlineExceeded) {
 			t.Errorf("server stop failed: %v", err)
 		}
 	})

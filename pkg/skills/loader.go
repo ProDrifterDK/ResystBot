@@ -25,24 +25,24 @@ const (
 
 type SkillTriggers struct {
 	Keywords []string `json:"keywords" yaml:"keywords"`
-	Tools    []string `json:"tools" yaml:"tools"`
-	Agents   []string `json:"agents" yaml:"agents"`
+	Tools    []string `json:"tools"    yaml:"tools"`
+	Agents   []string `json:"agents"   yaml:"agents"`
 }
 
 type SkillInjectConfig struct {
-	Method      string `json:"method" yaml:"method"`
-	Priority    string `json:"priority" yaml:"priority"`
+	Method      string `json:"method"       yaml:"method"`
+	Priority    string `json:"priority"     yaml:"priority"`
 	TokenBudget int    `json:"token_budget" yaml:"token_budget"`
 }
 
 type SkillMetadata struct {
-	Name        string            `json:"name" yaml:"name"`
+	Name        string            `json:"name"        yaml:"name"`
 	Description string            `json:"description" yaml:"description"`
-	Version     string            `json:"version" yaml:"version"`
-	Triggers    SkillTriggers     `json:"triggers" yaml:"triggers"`
-	Inject      SkillInjectConfig `json:"inject" yaml:"inject"`
-	Author      string            `json:"author" yaml:"author"`
-	Tags        []string          `json:"tags" yaml:"tags"`
+	Version     string            `json:"version"     yaml:"version"`
+	Triggers    SkillTriggers     `json:"triggers"    yaml:"triggers"`
+	Inject      SkillInjectConfig `json:"inject"      yaml:"inject"`
+	Author      string            `json:"author"      yaml:"author"`
+	Tags        []string          `json:"tags"        yaml:"tags"`
 }
 
 type SkillInfo struct {
@@ -246,7 +246,10 @@ func (sl *SkillsLoader) BuildSkillsIndex() string {
 
 	var lines []string
 	lines = append(lines, "# Skills\n")
-	lines = append(lines, "The following skills extend your capabilities. Use the `skill` tool to load full instructions.")
+	lines = append(
+		lines,
+		"The following skills extend your capabilities. Use the `skill` tool to load full instructions.",
+	)
 	lines = append(lines, "<available_skills>")
 
 	for _, s := range allSkills {

@@ -399,7 +399,10 @@ func TestDefaultConfig_LearningDefaults(t *testing.T) {
 		t.Fatal("Learning max lesson field chars should be non-zero")
 	}
 	if cfg.Learning.GetCollectionName() == cfg.Memory.GetCollectionName() {
-		t.Fatalf("Learning collection should differ from memory collection, both are %q", cfg.Learning.GetCollectionName())
+		t.Fatalf(
+			"Learning collection should differ from memory collection, both are %q",
+			cfg.Learning.GetCollectionName(),
+		)
 	}
 }
 

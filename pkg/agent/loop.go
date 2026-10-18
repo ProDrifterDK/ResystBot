@@ -10,6 +10,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/channels"
 	"github.com/sipeed/picoclaw/pkg/config"
@@ -27,11 +33,6 @@ import (
 	"github.com/sipeed/picoclaw/pkg/tools"
 	"github.com/sipeed/picoclaw/pkg/trace"
 	"github.com/sipeed/picoclaw/pkg/utils"
-	"path/filepath"
-	"strings"
-	"sync"
-	"sync/atomic"
-	"time"
 )
 
 type AgentLoop struct {
@@ -134,7 +135,12 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 			}
 			reconLLM := memory.NewLLMClient(llmBaseURL, llmModel, "lm-studio")
 			reconLogDir := filepath.Join(cfg.WorkspacePath(), "mind", "reconsolidation")
-			al.reconsolidationHandler = memory.NewReconsolidationHandler(embedClient, reconLLM, qdrantClient, reconLogDir)
+			al.reconsolidationHandler = memory.NewReconsolidationHandler(
+				embedClient,
+				reconLLM,
+				qdrantClient,
+				reconLogDir,
+			)
 		}
 	}
 
@@ -404,7 +410,15 @@ func registerSharedTools(
 			// spawn/delegate unless the target agent opts into recursive
 			// delegation). Without this the target profile inherits the whole
 			// registry, which by now contains spawn and delegate.
-			manager.RegisterAgentProfile(targetAgentID, targetAgent.Provider, targetAgent.Model, cloneSubagentTools(targetAgent), targetAgent.Candidates, targetAgent.ProvidersByName, targetAgent.MaxIterations)
+			manager.RegisterAgentProfile(
+				targetAgentID,
+				targetAgent.Provider,
+				targetAgent.Model,
+				cloneSubagentTools(targetAgent),
+				targetAgent.Candidates,
+				targetAgent.ProvidersByName,
+				targetAgent.MaxIterations,
+			)
 		}
 	}
 
@@ -719,8 +733,11 @@ func (al *AgentLoop) PublishStatusUpdate(ctx context.Context, content, channel, 
 			if len(preview) > 120 {
 				preview = preview[:120]
 			}
-			logger.WarnCF("agent", "Suppressing meta-response from status update (LLM described sending instead of writing message)",
-				map[string]any{"response_preview": preview})
+			logger.WarnCF(
+				"agent",
+				"Suppressing meta-response from status update (LLM described sending instead of writing message)",
+				map[string]any{"response_preview": preview},
+			)
 			return
 		}
 	}
@@ -742,7 +759,9 @@ func userIdentityFromInbound(msg bus.InboundMessage) UserIdentity {
 		IsGuest:     strings.EqualFold(metadata["is_guest"], "true") || strings.EqualFold(metadata["role"], "guest"),
 	}
 	if identity.DisplayName == "" {
-		identity.DisplayName = strings.TrimSpace(strings.TrimSpace(metadata["first_name"] + " " + metadata["last_name"]))
+		identity.DisplayName = strings.TrimSpace(
+			strings.TrimSpace(metadata["first_name"] + " " + metadata["last_name"]),
+		)
 	}
 	if identity.Username == "" && strings.Contains(msg.SenderID, "|") {
 		parts := strings.SplitN(msg.SenderID, "|", 2)
@@ -1306,10 +1325,14 @@ func (al *AgentLoop) runLLMIteration(
 			transientReason, isServerError := transientLLMFailure(err, agent.Model)
 
 			if isToolCallIDError && retry < maxRetries {
-				logger.WarnCF("agent", "Tool call/result pairing error detected, sanitizing and retrying", map[string]any{
-					"error": err.Error(),
-					"retry": retry,
-				})
+				logger.WarnCF(
+					"agent",
+					"Tool call/result pairing error detected, sanitizing and retrying",
+					map[string]any{
+						"error": err.Error(),
+						"retry": retry,
+					},
+				)
 				messages = sanitizeMessageHistory(messages)
 				al.forceCompression(agent, opts.SessionKey)
 				newHistory := session.CompressForLLM(agent.Sessions.GetHistory(opts.SessionKey))
@@ -1411,7 +1434,8 @@ func (al *AgentLoop) runLLMIteration(
 						})
 
 					// Add a system message to prompt the LLM to respond, but only if we haven't already
-					if len(messages) > 0 && messages[len(messages)-1].Content != "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]" {
+					if len(messages) > 0 &&
+						messages[len(messages)-1].Content != "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]" {
 						messages = append(messages, providers.Message{
 							Role:    "user",
 							Content: "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]",
@@ -1428,9 +1452,18 @@ func (al *AgentLoop) runLLMIteration(
 				}
 
 				// Clean up any system notes from the final content if the LLM echoed them
-				finalMsg.Content = strings.TrimPrefix(finalMsg.Content, "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]\n\n")
-				finalMsg.Content = strings.TrimPrefix(finalMsg.Content, "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]\n")
-				finalMsg.Content = strings.TrimPrefix(finalMsg.Content, "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]")
+				finalMsg.Content = strings.TrimPrefix(
+					finalMsg.Content,
+					"[System Note: Your previous response was empty. Please provide a valid response or use a tool.]\n\n",
+				)
+				finalMsg.Content = strings.TrimPrefix(
+					finalMsg.Content,
+					"[System Note: Your previous response was empty. Please provide a valid response or use a tool.]\n",
+				)
+				finalMsg.Content = strings.TrimPrefix(
+					finalMsg.Content,
+					"[System Note: Your previous response was empty. Please provide a valid response or use a tool.]",
+				)
 				finalMsg.Content = strings.TrimSpace(finalMsg.Content)
 
 				logger.InfoCF("agent", "LLM response without tool calls (direct answer)",
@@ -1460,8 +1493,13 @@ func (al *AgentLoop) runLLMIteration(
 				map[string]any{"agent_id": agent.ID, "iteration": iteration})
 			normalizedToolCalls = normalizedToolCalls[:maxTC]
 			messages = append(messages, providers.Message{
-				Role:    "user",
-				Content: fmt.Sprintf("[System: You requested %d tool calls but the per-iteration limit is %d. The following were dropped: %v. Prioritize your most important tools and try again.]", len(response.ToolCalls), maxTC, truncatedNames),
+				Role: "user",
+				Content: fmt.Sprintf(
+					"[System: You requested %d tool calls but the per-iteration limit is %d. The following were dropped: %v. Prioritize your most important tools and try again.]",
+					len(response.ToolCalls),
+					maxTC,
+					truncatedNames,
+				),
 			})
 		}
 
@@ -1666,7 +1704,11 @@ func (al *AgentLoop) maybeSummarize(agent *AgentInstance, sessionKey, channel, c
 				defer al.summarizing.Delete(summarizeKey)
 				if al.hookExecutor != nil {
 					compactCtx, compactCancel := context.WithTimeout(context.Background(), 10*time.Second)
-					_ = al.hookExecutor.RunPreCompact(compactCtx, sessionKey, fmt.Sprintf("%d tokens estimated", tokenEstimate))
+					_ = al.hookExecutor.RunPreCompact(
+						compactCtx,
+						sessionKey,
+						fmt.Sprintf("%d tokens estimated", tokenEstimate),
+					)
 					compactCancel()
 				}
 				if !constants.IsInternalChannel(channel) {

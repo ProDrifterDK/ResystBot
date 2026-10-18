@@ -24,17 +24,17 @@ type ProgressLogger func(taskID, label, event, detail string)
 
 // ToolLoopConfig configures the tool execution loop.
 type ToolLoopConfig struct {
-	Provider           providers.LLMProvider
-	Model              string
-	Tools              *ToolRegistry
-	MaxIterations      int
+	Provider            providers.LLMProvider
+	Model               string
+	Tools               *ToolRegistry
+	MaxIterations       int
 	MaxToolCallsPerIter int
-	LLMOptions         map[string]any
-	ProgressLogger     ProgressLogger                   // optional; called on each tool call/result/error
-	TaskID             string                           // optional; passed to ProgressLogger
-	TaskLabel          string                           // optional; passed to ProgressLogger
-	FallbackCandidates []providers.FallbackCandidate    // optional; fallback chain after primary fails
-	FallbackProviders  map[string]providers.LLMProvider // provider-name → provider for fallback routing
+	LLMOptions          map[string]any
+	ProgressLogger      ProgressLogger                   // optional; called on each tool call/result/error
+	TaskID              string                           // optional; passed to ProgressLogger
+	TaskLabel           string                           // optional; passed to ProgressLogger
+	FallbackCandidates  []providers.FallbackCandidate    // optional; fallback chain after primary fails
+	FallbackProviders   map[string]providers.LLMProvider // provider-name → provider for fallback routing
 }
 
 // ToolLoopResult contains the result of running the tool loop.
@@ -169,7 +169,8 @@ func RunToolLoop(
 					})
 
 				// Add a system message to prompt the LLM to respond, but only if we haven't already
-				if len(messages) > 0 && messages[len(messages)-1].Content != "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]" {
+				if len(messages) > 0 &&
+					messages[len(messages)-1].Content != "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]" {
 					messages = append(messages, providers.Message{
 						Role:    "user",
 						Content: "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]",
@@ -179,9 +180,18 @@ func RunToolLoop(
 			}
 
 			// Clean up any system notes from the final content if the LLM echoed them
-			finalContent = strings.TrimPrefix(finalContent, "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]\n\n")
-			finalContent = strings.TrimPrefix(finalContent, "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]\n")
-			finalContent = strings.TrimPrefix(finalContent, "[System Note: Your previous response was empty. Please provide a valid response or use a tool.]")
+			finalContent = strings.TrimPrefix(
+				finalContent,
+				"[System Note: Your previous response was empty. Please provide a valid response or use a tool.]\n\n",
+			)
+			finalContent = strings.TrimPrefix(
+				finalContent,
+				"[System Note: Your previous response was empty. Please provide a valid response or use a tool.]\n",
+			)
+			finalContent = strings.TrimPrefix(
+				finalContent,
+				"[System Note: Your previous response was empty. Please provide a valid response or use a tool.]",
+			)
 			finalContent = strings.TrimSpace(finalContent)
 
 			logger.InfoCF("toolloop", "LLM response without tool calls (direct answer)",
@@ -209,8 +219,13 @@ func RunToolLoop(
 				map[string]any{"iteration": iteration})
 			normalizedToolCalls = normalizedToolCalls[:maxTC]
 			messages = append(messages, providers.Message{
-				Role:    "user",
-				Content: fmt.Sprintf("[System: You requested %d tool calls but the per-iteration limit is %d. The following were dropped: %v. Prioritize your most important tools and try again.]", len(response.ToolCalls), maxTC, truncatedNames),
+				Role: "user",
+				Content: fmt.Sprintf(
+					"[System: You requested %d tool calls but the per-iteration limit is %d. The following were dropped: %v. Prioritize your most important tools and try again.]",
+					len(response.ToolCalls),
+					maxTC,
+					truncatedNames,
+				),
 			})
 		}
 

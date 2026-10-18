@@ -48,9 +48,9 @@ func ReadTeamForgeInbox() string {
 		}
 
 		var entry struct {
-			Event     string                 `json:"event"`
-			Timestamp string                 `json:"timestamp"`
-			Data      map[string]interface{} `json:"data"`
+			Event     string         `json:"event"`
+			Timestamp string         `json:"timestamp"`
+			Data      map[string]any `json:"data"`
 		}
 		if err := json.Unmarshal(data, &entry); err != nil {
 			logger.WarnCF("agent", "Failed to parse tf_inbox file",

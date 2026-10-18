@@ -11,6 +11,7 @@ import (
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	mcptransport "github.com/mark3labs/mcp-go/client/transport"
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
+
 	"github.com/sipeed/picoclaw/pkg/config"
 )
 
@@ -18,7 +19,10 @@ type mockTransport struct{}
 
 func (m *mockTransport) Start(context.Context) error { return nil }
 
-func (m *mockTransport) SendRequest(context.Context, mcptransport.JSONRPCRequest) (*mcptransport.JSONRPCResponse, error) {
+func (m *mockTransport) SendRequest(
+	context.Context,
+	mcptransport.JSONRPCRequest,
+) (*mcptransport.JSONRPCResponse, error) {
 	return nil, nil
 }
 

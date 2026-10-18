@@ -3,10 +3,10 @@ package agent
 import (
 	"unicode/utf8"
 
+	tke "github.com/pkoukk/tiktoken-go"
+
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/providers/protocoltypes"
-
-	tke "github.com/pkoukk/tiktoken-go"
 )
 
 var _encoder *tke.Tiktoken

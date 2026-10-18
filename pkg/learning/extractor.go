@@ -156,7 +156,10 @@ func (e *OutcomeExtractor) PruneStaleSessions() {
 	}
 }
 
-func (e *OutcomeExtractor) buildCorrectionLesson(previous, current *trace.TurnTrace, betterApproach string) *LessonRecord {
+func (e *OutcomeExtractor) buildCorrectionLesson(
+	previous, current *trace.TurnTrace,
+	betterApproach string,
+) *LessonRecord {
 	if previous == nil || current == nil {
 		return nil
 	}

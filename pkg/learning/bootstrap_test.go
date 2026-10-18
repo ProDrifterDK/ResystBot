@@ -51,7 +51,12 @@ func (f *fakeRuntimeStore) EnsureCollection(ctx context.Context, vectorSize int)
 	return f.err
 }
 
-func (f *fakeRuntimeStore) Search(ctx context.Context, vector []float64, limit int, filter *memory.QdrantFilter) ([]memory.QdrantSearchResult, error) {
+func (f *fakeRuntimeStore) Search(
+	ctx context.Context,
+	vector []float64,
+	limit int,
+	filter *memory.QdrantFilter,
+) ([]memory.QdrantSearchResult, error) {
 	return nil, nil
 }
 

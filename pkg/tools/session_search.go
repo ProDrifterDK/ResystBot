@@ -143,7 +143,9 @@ func (t *SessionSearchTool) discover(query string, limit int) *ToolResult {
 			fmt.Fprintf(&sb, "  match [%s #%d]: %s\n", h.Role, h.MsgIdx, h.Snippet)
 		}
 	}
-	sb.WriteString("\nUse session_search with session_id to read more, or session_id + around to scroll around a message.")
+	sb.WriteString(
+		"\nUse session_search with session_id to read more, or session_id + around to scroll around a message.",
+	)
 	return SilentResult(capSessionOutput(sb.String()))
 }
 
@@ -181,7 +183,12 @@ func (t *SessionSearchTool) read(sessionID string) *ToolResult {
 	prevIdx := -1
 	for _, m := range msgs {
 		if prevIdx >= 0 && m.Idx > prevIdx+1 {
-			fmt.Fprintf(&sb, "... [%d messages omitted, use around=%d to read them] ...\n\n", m.Idx-prevIdx-1, prevIdx+1+(m.Idx-prevIdx-1)/2)
+			fmt.Fprintf(
+				&sb,
+				"... [%d messages omitted, use around=%d to read them] ...\n\n",
+				m.Idx-prevIdx-1,
+				prevIdx+1+(m.Idx-prevIdx-1)/2,
+			)
 		}
 		fmt.Fprintf(&sb, "[%s #%d] %s\n\n", m.Role, m.Idx, truncateSessionMsg(m.Content))
 		prevIdx = m.Idx

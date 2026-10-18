@@ -374,7 +374,11 @@ func TestValidateToolArgs_RealSchemas(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("exec_session schema should accept valid args: %v", err)
 	}
-	if err := validateToolArgs(execSchema, map[string]any{"action": "invalid"}); err == nil || err.Error() != `property "action": value invalid is not in enum` {
+	if err := validateToolArgs(
+		execSchema,
+		map[string]any{"action": "invalid"},
+	); err == nil ||
+		err.Error() != `property "action": value invalid is not in enum` {
 		t.Fatalf("exec_session schema should reject invalid action enum, got %v", err)
 	}
 

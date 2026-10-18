@@ -50,7 +50,12 @@ type LessonRecord struct {
 }
 
 type qdrantStore interface {
-	Search(ctx context.Context, vector []float64, limit int, filter *memory.QdrantFilter) ([]memory.QdrantSearchResult, error)
+	Search(
+		ctx context.Context,
+		vector []float64,
+		limit int,
+		filter *memory.QdrantFilter,
+	) ([]memory.QdrantSearchResult, error)
 	Upsert(ctx context.Context, points []memory.QdrantPoint) error
 	UpdatePayload(ctx context.Context, pointID string, fields map[string]any) error
 }

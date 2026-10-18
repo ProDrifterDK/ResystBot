@@ -40,12 +40,22 @@ func (r *Retriever) Search(ctx context.Context, query string, topK int) ([]Memor
 
 // SearchWithFilter is the same as Search but restricts results to chunks whose
 // source_type matches the provided value.
-func (r *Retriever) SearchWithFilter(ctx context.Context, query string, topK int, sourceType string) ([]MemoryChunk, error) {
+func (r *Retriever) SearchWithFilter(
+	ctx context.Context,
+	query string,
+	topK int,
+	sourceType string,
+) ([]MemoryChunk, error) {
 	return r.searchInternal(ctx, query, topK, &sourceType)
 }
 
 // searchInternal implements the shared logic for Search and SearchWithFilter.
-func (r *Retriever) searchInternal(ctx context.Context, query string, topK int, sourceType *string) ([]MemoryChunk, error) {
+func (r *Retriever) searchInternal(
+	ctx context.Context,
+	query string,
+	topK int,
+	sourceType *string,
+) ([]MemoryChunk, error) {
 	// 1. Embed the query.
 	vec, err := r.embedder.Embed(ctx, query)
 	if err != nil {

@@ -106,15 +106,19 @@ func TestRunConsolidation_SkipsUnavailableDeps(t *testing.T) {
 	}
 
 	deps := &ConsolidationDeps{
-		DryRun:             false,
-		StoreAvailable:     true,
-		EmbedderAvailable:  false,
-		LLMAvailable:       false,
-		ArchiverAvailable:  true,
+		DryRun:            false,
+		StoreAvailable:    true,
+		EmbedderAvailable: false,
+		LLMAvailable:      false,
+		ArchiverAvailable: true,
 	}
 
 	phases := []NamedPhase{
-		{Name: "abstract", Fn: noopPhase("abstract"), Deps: PhaseDeps{Store: true, Embedder: true, LLM: true, Archiver: true}},
+		{
+			Name: "abstract",
+			Fn:   noopPhase("abstract"),
+			Deps: PhaseDeps{Store: true, Embedder: true, LLM: true, Archiver: true},
+		},
 		{Name: "strengthen", Fn: noopPhase("strengthen"), Deps: PhaseDeps{Store: true}},
 		{Name: "score", Fn: noopPhase("score"), Deps: PhaseDeps{Store: true}},
 		{Name: "prune", Fn: noopPhase("prune"), Deps: PhaseDeps{Store: true, Archiver: true}},
@@ -156,12 +160,16 @@ func TestRunConsolidation_NoRunnablePhases(t *testing.T) {
 	}
 
 	deps := &ConsolidationDeps{
-		DryRun:        false,
+		DryRun:         false,
 		StoreAvailable: false,
 	}
 
 	phases := []NamedPhase{
-		{Name: "abstract", Fn: noopPhase("abstract"), Deps: PhaseDeps{Store: true, Embedder: true, LLM: true, Archiver: true}},
+		{
+			Name: "abstract",
+			Fn:   noopPhase("abstract"),
+			Deps: PhaseDeps{Store: true, Embedder: true, LLM: true, Archiver: true},
+		},
 		{Name: "strengthen", Fn: noopPhase("strengthen"), Deps: PhaseDeps{Store: true}},
 		{Name: "score", Fn: noopPhase("score"), Deps: PhaseDeps{Store: true}},
 		{Name: "prune", Fn: noopPhase("prune"), Deps: PhaseDeps{Store: true, Archiver: true}},
@@ -192,7 +200,11 @@ func TestRunConsolidation_SinglePhaseBlocked(t *testing.T) {
 	}
 
 	phases := []NamedPhase{
-		{Name: "abstract", Fn: noopPhase("abstract"), Deps: PhaseDeps{Store: true, Embedder: true, LLM: true, Archiver: true}},
+		{
+			Name: "abstract",
+			Fn:   noopPhase("abstract"),
+			Deps: PhaseDeps{Store: true, Embedder: true, LLM: true, Archiver: true},
+		},
 	}
 
 	_, err := RunConsolidation(context.Background(), deps, phases...)

@@ -912,7 +912,13 @@ func TestAgentLoop_TraceSuccess(t *testing.T) {
 	al := NewAgentLoop(cfg, bus.NewMessageBus(), provider)
 	al.RegisterTool(&traceMockTool{})
 
-	response, err := al.ProcessDirectWithChannel(ctx, "trace this turn", "trace-session-success", "test", "chat-success")
+	response, err := al.ProcessDirectWithChannel(
+		ctx,
+		"trace this turn",
+		"trace-session-success",
+		"test",
+		"chat-success",
+	)
 	if err != nil {
 		t.Fatalf("ProcessDirectWithChannel failed: %v", err)
 	}
@@ -986,7 +992,13 @@ func TestAgentLoop_TraceIncludesInjectedLearningIDs(t *testing.T) {
 		BetterApproach: "Use the established fix path",
 	}}}, &cfg.Learning)
 
-	response, err := al.ProcessDirectWithChannel(context.Background(), "use the learning trace path", "trace-session-learning", "test", "chat-learning")
+	response, err := al.ProcessDirectWithChannel(
+		context.Background(),
+		"use the learning trace path",
+		"trace-session-learning",
+		"test",
+		"chat-learning",
+	)
 	if err != nil {
 		t.Fatalf("ProcessDirectWithChannel failed: %v", err)
 	}
@@ -1024,7 +1036,13 @@ func TestAgentLoop_TraceWriteFailureNonFatal(t *testing.T) {
 	}
 	al.traceWriter = trace.NewTraceWriter(blockingPath)
 
-	response, err := al.ProcessDirectWithChannel(context.Background(), "trigger trace failure", "trace-session-failure", "test", "chat-failure")
+	response, err := al.ProcessDirectWithChannel(
+		context.Background(),
+		"trigger trace failure",
+		"trace-session-failure",
+		"test",
+		"chat-failure",
+	)
 	if err != nil {
 		t.Fatalf("ProcessDirectWithChannel failed: %v", err)
 	}
@@ -1067,7 +1085,13 @@ func TestAgentLoop_OutcomeExtractionFailureNonFatal(t *testing.T) {
 	al.RegisterTool(&failingTraceTool{})
 	al.outcomeExtractor = learning.NewOutcomeExtractor(&outcomeRecorder{err: errors.New("store failed")}, &cfg.Learning)
 
-	response, err := al.ProcessDirectWithChannel(context.Background(), "please install a package and explain what broke", "trace-session-learning-fail", "test", "chat-learning-fail")
+	response, err := al.ProcessDirectWithChannel(
+		context.Background(),
+		"please install a package and explain what broke",
+		"trace-session-learning-fail",
+		"test",
+		"chat-learning-fail",
+	)
 	if err != nil {
 		t.Fatalf("ProcessDirectWithChannel failed: %v", err)
 	}

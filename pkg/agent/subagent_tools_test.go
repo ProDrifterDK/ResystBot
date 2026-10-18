@@ -97,7 +97,11 @@ func assertNoRecursiveTools(t *testing.T, offered []string) {
 	}
 	for _, banned := range []string{"spawn", "delegate", "message"} {
 		if set[banned] {
-			t.Errorf("subagent run was offered %q; recursive/outbound tools must be stripped (offered=%v)", banned, offered)
+			t.Errorf(
+				"subagent run was offered %q; recursive/outbound tools must be stripped (offered=%v)",
+				banned,
+				offered,
+			)
 		}
 	}
 	// Sanity: the run must still have ordinary tools, otherwise the assertion

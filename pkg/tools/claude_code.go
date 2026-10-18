@@ -87,11 +87,11 @@ func NewClaudeCodeTool(cfg ClaudeCodeToolConfig) *ClaudeCodeTool {
 // ensureDefaults creates DELEGATION.md and reports dir if they don't exist.
 func (t *ClaudeCodeTool) ensureDefaults() {
 	// Create reports directory
-	_ = os.MkdirAll(t.reportsDir, 0755)
+	_ = os.MkdirAll(t.reportsDir, 0o755)
 
 	// Create DELEGATION.md only if it doesn't exist
 	if _, err := os.Stat(t.delegationFile); os.IsNotExist(err) {
-		_ = os.WriteFile(t.delegationFile, []byte(defaultDelegationMD), 0644)
+		_ = os.WriteFile(t.delegationFile, []byte(defaultDelegationMD), 0o644)
 	}
 }
 
@@ -226,7 +226,7 @@ func (t *ClaudeCodeTool) Execute(ctx context.Context, args map[string]any) *Tool
 	}
 
 	// Ensure reports directory exists
-	_ = os.MkdirAll(t.reportsDir, 0755)
+	_ = os.MkdirAll(t.reportsDir, 0o755)
 
 	// Resolve session ID
 	var resumeSessionID string
@@ -372,7 +372,13 @@ func (t *ClaudeCodeTool) runClaude(ctx context.Context, cmdArgs []string, workDi
 }
 
 // handleError either retries once or reports the error via callback.
-func (t *ClaudeCodeTool) handleError(ctx context.Context, errMsg string, cmdArgs []string, workDir, task string, retryCount int) {
+func (t *ClaudeCodeTool) handleError(
+	ctx context.Context,
+	errMsg string,
+	cmdArgs []string,
+	workDir, task string,
+	retryCount int,
+) {
 	if retryCount < 1 {
 		// Retry once (already in a goroutine, no need to spawn another)
 		t.runClaude(ctx, cmdArgs, workDir, task, retryCount+1)

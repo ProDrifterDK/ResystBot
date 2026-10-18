@@ -33,7 +33,7 @@ func TestFileTokenStore_New(t *testing.T) {
 	if err != nil {
 		t.Fatalf("token dir not created: %v", err)
 	}
-	if info.Mode().Perm() != 0700 {
+	if info.Mode().Perm() != 0o700 {
 		t.Errorf("token dir perm = %o, want 0700", info.Mode().Perm())
 	}
 }
@@ -63,7 +63,7 @@ func TestFileTokenStore_SaveAndGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("token file not created: %v", err)
 	}
-	if fileInfo.Mode().Perm() != 0600 {
+	if fileInfo.Mode().Perm() != 0o600 {
 		t.Errorf("token file perm = %o, want 0600", fileInfo.Mode().Perm())
 	}
 
@@ -145,12 +145,12 @@ func TestFileTokenStore_CorruptedFile(t *testing.T) {
 	t.Setenv("HOME", tmpDir)
 
 	dir := filepath.Join(tmpDir, ".picoclaw", "tokens")
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 
 	corruptPath := filepath.Join(dir, "corrupt.json")
-	if err := os.WriteFile(corruptPath, []byte("{invalid json"), 0600); err != nil {
+	if err := os.WriteFile(corruptPath, []byte("{invalid json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -206,7 +206,9 @@ func TestCallbackServer_ErrorParam(t *testing.T) {
 	}
 	defer cb.Close()
 
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/callback?error=access_denied&error_description=User+denied", cb.port))
+	resp, err := http.Get(
+		fmt.Sprintf("http://127.0.0.1:%d/callback?error=access_denied&error_description=User+denied", cb.port),
+	)
 	if err != nil {
 		t.Fatalf("GET error = %v", err)
 	}

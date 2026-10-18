@@ -44,8 +44,18 @@ func TestOutcomeRecoveredToolErrorWinsOverPlainFailure(t *testing.T) {
 		Timestamp:   time.Date(2026, 5, 3, 10, 0, 0, 0, time.UTC),
 		UserMessage: "install numpy on Pop!_OS with pip in this environment",
 		ToolCalls: []trace.ToolCallTrace{
-			{Name: "exec", Args: map[string]any{"command": "pip install numpy"}, Result: "error: externally-managed-environment", IsError: true},
-			{Name: "exec", Args: map[string]any{"command": "pip install --break-system-packages numpy"}, Result: "Successfully installed numpy", IsError: false},
+			{
+				Name:    "exec",
+				Args:    map[string]any{"command": "pip install numpy"},
+				Result:  "error: externally-managed-environment",
+				IsError: true,
+			},
+			{
+				Name:    "exec",
+				Args:    map[string]any{"command": "pip install --break-system-packages numpy"},
+				Result:  "Successfully installed numpy",
+				IsError: false,
+			},
 			{Name: "read_file", Args: map[string]any{"path": "notes.txt"}, Result: "ok", IsError: false},
 		},
 	})
@@ -83,8 +93,18 @@ func TestOutcomeUsesFirstMeaningfulFailureWithinFirstThreeCalls(t *testing.T) {
 		UserMessage: "please install a package and explain what broke when the first try fails",
 		ToolCalls: []trace.ToolCallTrace{
 			{Name: "exec", Args: map[string]any{"command": "pip install foo"}, Result: "", IsError: true},
-			{Name: "exec", Args: map[string]any{"command": "pip install foo"}, Result: "permission denied", IsError: true},
-			{Name: "exec", Args: map[string]any{"command": "pip install foo --user"}, Result: "error: externally-managed-environment", IsError: true},
+			{
+				Name:    "exec",
+				Args:    map[string]any{"command": "pip install foo"},
+				Result:  "permission denied",
+				IsError: true,
+			},
+			{
+				Name:    "exec",
+				Args:    map[string]any{"command": "pip install foo --user"},
+				Result:  "error: externally-managed-environment",
+				IsError: true,
+			},
 		},
 	})
 	if err != nil {

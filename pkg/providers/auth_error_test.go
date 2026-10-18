@@ -11,7 +11,11 @@ func TestClassifyAuthErrorKinds(t *testing.T) {
 		err  error
 		want AuthErrorKind
 	}{
-		{"invalid key", errors.New(`Status: 401 Body: {"error":{"message":"Incorrect API key provided"}}`), AuthErrorInvalidAPIKey},
+		{
+			"invalid key",
+			errors.New(`Status: 401 Body: {"error":{"message":"Incorrect API key provided"}}`),
+			AuthErrorInvalidAPIKey,
+		},
 		{"missing key", errors.New("no API key is configured for this provider"), AuthErrorMissingAPIKey},
 		{"expired token", errors.New("OAuth token expired; re-authenticate"), AuthErrorExpiredToken},
 		{"generic 401", errors.New("API request failed: Status: 401"), AuthErrorGeneric},

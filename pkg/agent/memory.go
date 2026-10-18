@@ -147,7 +147,12 @@ func (ms *MemoryStore) Update(target, channel, chatID string, fn func(string) (s
 		return "", err
 	}
 	if len(next) > limit {
-		return "", fmt.Errorf("content would be %d chars, exceeding the %d char limit for target %q", len(next), limit, target)
+		return "", fmt.Errorf(
+			"content would be %d chars, exceeding the %d char limit for target %q",
+			len(next),
+			limit,
+			target,
+		)
 	}
 
 	if target == "user" {

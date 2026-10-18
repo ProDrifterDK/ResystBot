@@ -21,7 +21,11 @@ type AgentRegistry struct {
 // resolveAgentProvider returns a dedicated provider for the given agent model.
 // It looks up the model in cfg.ModelList and calls CreateProviderFromConfig.
 // Falls back to the supplied defaultProvider when no matching entry is found.
-func resolveAgentProvider(cfg *config.Config, model string, defaultProvider providers.LLMProvider) providers.LLMProvider {
+func resolveAgentProvider(
+	cfg *config.Config,
+	model string,
+	defaultProvider providers.LLMProvider,
+) providers.LLMProvider {
 	if model == "" {
 		return defaultProvider
 	}

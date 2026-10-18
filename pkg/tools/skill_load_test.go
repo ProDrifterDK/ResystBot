@@ -15,7 +15,11 @@ func TestSkillLoadToolFound(t *testing.T) {
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: test-skill\ndescription: A test skill\n---\n\n# Test Skill\n\nDo the thing."), 0o644); err != nil {
+	if err := os.WriteFile(
+		filepath.Join(skillDir, "SKILL.md"),
+		[]byte("---\nname: test-skill\ndescription: A test skill\n---\n\n# Test Skill\n\nDo the thing."),
+		0o644,
+	); err != nil {
 		t.Fatal(err)
 	}
 

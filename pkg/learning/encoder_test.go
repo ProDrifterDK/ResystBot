@@ -24,7 +24,12 @@ func newFakeStore() *fakeStore {
 	return &fakeStore{updated: make(map[string]map[string]any)}
 }
 
-func (f *fakeStore) Search(ctx context.Context, vector []float64, limit int, filter *memory.QdrantFilter) ([]memory.QdrantSearchResult, error) {
+func (f *fakeStore) Search(
+	ctx context.Context,
+	vector []float64,
+	limit int,
+	filter *memory.QdrantFilter,
+) ([]memory.QdrantSearchResult, error) {
 	f.searchLimit = limit
 	f.searchFilter = filter
 	return f.searchResults, nil
@@ -92,7 +97,8 @@ func TestEncoderStoresNewLesson(t *testing.T) {
 	if len(store.updated) != 0 {
 		t.Fatalf("expected no payload update for new lesson, got %d", len(store.updated))
 	}
-	if store.searchFilter == nil || store.searchFilter.SourceType == nil || *store.searchFilter.SourceType != sourceTypeLearning {
+	if store.searchFilter == nil || store.searchFilter.SourceType == nil ||
+		*store.searchFilter.SourceType != sourceTypeLearning {
 		t.Fatalf("expected learning source_type filter, got %#v", store.searchFilter)
 	}
 

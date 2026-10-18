@@ -122,7 +122,12 @@ func TestMCPToolBridgeParameters(t *testing.T) {
 			Required:   []string{"path"},
 		},
 	}
-	bridge := NewMCPToolBridge("myserver", mcpTool, &Manager{connections: make(map[string]*ServerConnection)}, time.Second*30)
+	bridge := NewMCPToolBridge(
+		"myserver",
+		mcpTool,
+		&Manager{connections: make(map[string]*ServerConnection)},
+		time.Second*30,
+	)
 
 	params := bridge.Parameters()
 
@@ -187,7 +192,12 @@ func TestMCPToolBridgeParametersResolvesRefs(t *testing.T) {
 			},
 		},
 	}
-	bridge := NewMCPToolBridge("playwright", mcpTool, &Manager{connections: make(map[string]*ServerConnection)}, time.Second*30)
+	bridge := NewMCPToolBridge(
+		"playwright",
+		mcpTool,
+		&Manager{connections: make(map[string]*ServerConnection)},
+		time.Second*30,
+	)
 
 	// Serialize the way the provider payload does: the failure is a wire-format failure.
 	raw, err := json.Marshal(bridge.Parameters())
@@ -221,11 +231,18 @@ func TestMCPToolBridgeParametersPreservesAdditionalProperties(t *testing.T) {
 			AdditionalProperties: true,
 		},
 	}
-	bridge := NewMCPToolBridge("scrapling", mcpTool, &Manager{connections: make(map[string]*ServerConnection)}, time.Second*30)
+	bridge := NewMCPToolBridge(
+		"scrapling",
+		mcpTool,
+		&Manager{connections: make(map[string]*ServerConnection)},
+		time.Second*30,
+	)
 
 	got, ok := bridge.Parameters()["additionalProperties"]
 	if !ok {
-		t.Fatal("additionalProperties dropped from the tool schema; validateToolArgs then denies unknown args by default")
+		t.Fatal(
+			"additionalProperties dropped from the tool schema; validateToolArgs then denies unknown args by default",
+		)
 	}
 	if allowed, isBool := got.(bool); !isBool || !allowed {
 		t.Errorf("additionalProperties = %#v, want true", got)

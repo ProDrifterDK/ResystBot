@@ -228,7 +228,10 @@ func newAgentInstanceWithMCPManager(
 		ref := providers.ParseModelRef(mc.Model, defaults.Provider)
 		if ref != nil {
 			providerKey := fallbackProviderKey(ref, mc.ModelName)
-			candidates = append(candidates, providers.FallbackCandidate{Provider: providerKey, Model: ref.Model, IdentityKey: providerKey})
+			candidates = append(
+				candidates,
+				providers.FallbackCandidate{Provider: providerKey, Model: ref.Model, IdentityKey: providerKey},
+			)
 			providersByName[providerKey] = provider
 		}
 	}
@@ -237,7 +240,10 @@ func newAgentInstanceWithMCPManager(
 		ref := providers.ParseModelRef(model, defaults.Provider)
 		if ref != nil {
 			providerKey := fallbackProviderKey(ref, "")
-			candidates = append(candidates, providers.FallbackCandidate{Provider: providerKey, Model: ref.Model, IdentityKey: providerKey})
+			candidates = append(
+				candidates,
+				providers.FallbackCandidate{Provider: providerKey, Model: ref.Model, IdentityKey: providerKey},
+			)
 			providersByName[providerKey] = provider
 		} else {
 			providersByName[defaults.Provider] = provider
@@ -257,7 +263,10 @@ func newAgentInstanceWithMCPManager(
 			if _, exists := providersByName[providerKey]; !exists {
 				providersByName[providerKey] = provider
 			}
-			candidates = append(candidates, providers.FallbackCandidate{Provider: providerKey, Model: ref.Model, IdentityKey: providerKey})
+			candidates = append(
+				candidates,
+				providers.FallbackCandidate{Provider: providerKey, Model: ref.Model, IdentityKey: providerKey},
+			)
 			continue
 		}
 		ref := providers.ParseModelRef(mc.Model, defaults.Provider)
@@ -280,7 +289,10 @@ func newAgentInstanceWithMCPManager(
 			}
 		}
 		if !alreadyAdded {
-			candidates = append(candidates, providers.FallbackCandidate{Provider: providerKey, Model: ref.Model, IdentityKey: providerKey})
+			candidates = append(
+				candidates,
+				providers.FallbackCandidate{Provider: providerKey, Model: ref.Model, IdentityKey: providerKey},
+			)
 		}
 	}
 

@@ -611,12 +611,16 @@ func TestFallback_RateLimited_SkipsCandidate(t *testing.T) {
 	}
 	rl.RegisterCandidates(candidates)
 
-	firstResult, err := fc.Execute(context.Background(), candidates, func(ctx context.Context, provider, model string) (*LLMResponse, error) {
-		if provider != "openai" {
-			t.Fatalf("first provider = %s, want openai", provider)
-		}
-		return &LLMResponse{Content: "first", FinishReason: "stop"}, nil
-	})
+	firstResult, err := fc.Execute(
+		context.Background(),
+		candidates,
+		func(ctx context.Context, provider, model string) (*LLMResponse, error) {
+			if provider != "openai" {
+				t.Fatalf("first provider = %s, want openai", provider)
+			}
+			return &LLMResponse{Content: "first", FinishReason: "stop"}, nil
+		},
+	)
 	if err != nil {
 		t.Fatalf("first Execute error = %v", err)
 	}
@@ -625,10 +629,14 @@ func TestFallback_RateLimited_SkipsCandidate(t *testing.T) {
 	}
 
 	var called []string
-	secondResult, err := fc.Execute(context.Background(), candidates, func(ctx context.Context, provider, model string) (*LLMResponse, error) {
-		called = append(called, provider+"/"+model)
-		return &LLMResponse{Content: provider, FinishReason: "stop"}, nil
-	})
+	secondResult, err := fc.Execute(
+		context.Background(),
+		candidates,
+		func(ctx context.Context, provider, model string) (*LLMResponse, error) {
+			called = append(called, provider+"/"+model)
+			return &LLMResponse{Content: provider, FinishReason: "stop"}, nil
+		},
+	)
 	if err != nil {
 		t.Fatalf("second Execute error = %v", err)
 	}
@@ -685,7 +693,11 @@ func TestFallback_RateLimiterRegistry_NilBackwardCompat(t *testing.T) {
 		t.Fatal("expected nil rate limiter registry for backward-compatible constructor")
 	}
 
-	result, err := fc.Execute(context.Background(), []FallbackCandidate{makeCandidate("openai", "gpt-4")}, successRun("ok"))
+	result, err := fc.Execute(
+		context.Background(),
+		[]FallbackCandidate{makeCandidate("openai", "gpt-4")},
+		successRun("ok"),
+	)
 	if err != nil {
 		t.Fatalf("Execute error = %v", err)
 	}

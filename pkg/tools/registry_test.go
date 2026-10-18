@@ -235,7 +235,14 @@ func TestToolRegistry_ExecuteWithContext_PostToolUseSuccessSignals(t *testing.T)
 		}},
 	}))
 
-	result := r.ExecuteWithContext(context.Background(), "greet", map[string]any{"name": "world"}, "telegram", "chat-1", nil)
+	result := r.ExecuteWithContext(
+		context.Background(),
+		"greet",
+		map[string]any{"name": "world"},
+		"telegram",
+		"chat-1",
+		nil,
+	)
 	if result.IsError {
 		t.Fatalf("expected success result, got error: %s", result.ForLLM)
 	}
@@ -279,7 +286,14 @@ func TestToolRegistry_ExecuteWithContext_PostToolUseErrorSignals(t *testing.T) {
 		}},
 	}))
 
-	result := r.ExecuteWithContext(context.Background(), "fail", map[string]any{"name": "world"}, "telegram", "chat-1", nil)
+	result := r.ExecuteWithContext(
+		context.Background(),
+		"fail",
+		map[string]any{"name": "world"},
+		"telegram",
+		"chat-1",
+		nil,
+	)
 	if !result.IsError {
 		t.Fatal("expected error result")
 	}
@@ -459,6 +473,7 @@ func TestToolRegistry_ConcurrentAccess(t *testing.T) {
 		t.Error("expected tools to be registered after concurrent access")
 	}
 }
+
 func TestToolRegistry_RemoveAll(t *testing.T) {
 	r := NewToolRegistry()
 	r.Register(newMockTool("keep", "kept"))

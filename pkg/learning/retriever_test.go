@@ -58,7 +58,8 @@ func TestLearningRetrieverHydratesStableIDs(t *testing.T) {
 	if embedder.lastQuery != "how do I install python packages?" {
 		t.Fatalf("query embed input = %q", embedder.lastQuery)
 	}
-	if store.searchFilter == nil || store.searchFilter.SourceType == nil || *store.searchFilter.SourceType != sourceTypeLearning {
+	if store.searchFilter == nil || store.searchFilter.SourceType == nil ||
+		*store.searchFilter.SourceType != sourceTypeLearning {
 		t.Fatalf("expected learning source_type filter, got %#v", store.searchFilter)
 	}
 }

@@ -455,9 +455,19 @@ func TestQdrantClient_Scroll(t *testing.T) {
 					"result": map[string]any{
 						"points": []map[string]any{
 							{
-								"id":      "point-1",
-								"vector":  []float64{0.1, 0.2},
-								"payload": map[string]any{"text": "hello", "source": "test.md", "source_type": "memory_file", "chunk_type": "section", "importance": 5, "access_count": 0, "created_at": "2026-01-01T00:00:00Z", "last_accessed": "2026-01-01T00:00:00Z", "tags": []string{}},
+								"id":     "point-1",
+								"vector": []float64{0.1, 0.2},
+								"payload": map[string]any{
+									"text":          "hello",
+									"source":        "test.md",
+									"source_type":   "memory_file",
+									"chunk_type":    "section",
+									"importance":    5,
+									"access_count":  0,
+									"created_at":    "2026-01-01T00:00:00Z",
+									"last_accessed": "2026-01-01T00:00:00Z",
+									"tags":          []string{},
+								},
 							},
 						},
 						"next_page_offset": "point-1",

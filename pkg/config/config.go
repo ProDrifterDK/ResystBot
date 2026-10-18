@@ -553,31 +553,31 @@ type ExecConfig struct {
 
 // ClaudeCodeConfig holds configuration for the Claude Code delegation tool.
 type ClaudeCodeConfig struct {
-	Enabled        bool    `json:"enabled"          env:"PICOCLAW_TOOLS_CLAUDE_CODE_ENABLED"`
-	TimeoutSeconds int     `json:"timeout_seconds"  env:"PICOCLAW_TOOLS_CLAUDE_CODE_TIMEOUT_SECONDS"`  // 0 means default (600s = 10 min)
-	PermissionMode string  `json:"permission_mode"   env:"PICOCLAW_TOOLS_CLAUDE_CODE_PERMISSION_MODE"` // "auto", "bypassPermissions", etc. Default: "auto"
-	MaxBudgetUSD   float64 `json:"max_budget_usd"   env:"PICOCLAW_TOOLS_CLAUDE_CODE_MAX_BUDGET_USD"`   // 0 means no limit
+	Enabled        bool    `json:"enabled"         env:"PICOCLAW_TOOLS_CLAUDE_CODE_ENABLED"`
+	TimeoutSeconds int     `json:"timeout_seconds" env:"PICOCLAW_TOOLS_CLAUDE_CODE_TIMEOUT_SECONDS"` // 0 means default (600s = 10 min)
+	PermissionMode string  `json:"permission_mode" env:"PICOCLAW_TOOLS_CLAUDE_CODE_PERMISSION_MODE"` // "auto", "bypassPermissions", etc. Default: "auto"
+	MaxBudgetUSD   float64 `json:"max_budget_usd"  env:"PICOCLAW_TOOLS_CLAUDE_CODE_MAX_BUDGET_USD"`  // 0 means no limit
 }
 
 // MemoryConfig holds configuration for the hippocampal memory system.
 type MemoryConfig struct {
-	Enabled        bool     `json:"enabled"            env:"PICOCLAW_MEMORY_ENABLED"`
-	QdrantURL      string   `json:"qdrant_url"         env:"PICOCLAW_MEMORY_QDRANT_URL"`
-	EmbeddingURL   string   `json:"embedding_url"      env:"PICOCLAW_MEMORY_EMBEDDING_URL"`
-	EmbeddingModel string   `json:"embedding_model"    env:"PICOCLAW_MEMORY_EMBEDDING_MODEL"`
-	CollectionName string   `json:"collection_name"    env:"PICOCLAW_MEMORY_COLLECTION_NAME"`
-	AutoInjectTopK int      `json:"auto_inject_top_k"  env:"PICOCLAW_MEMORY_AUTO_INJECT_TOP_K"`
-	DecayRate      float64  `json:"decay_rate"         env:"PICOCLAW_MEMORY_DECAY_RATE"`
-	MaxChunkTokens int      `json:"max_chunk_tokens"   env:"PICOCLAW_MEMORY_MAX_CHUNK_TOKENS"`
-	DisplayTokens  int      `json:"display_tokens"     env:"PICOCLAW_MEMORY_DISPLAY_TOKENS"`
-	IndexDirs      []string `json:"index_dirs"         env:"PICOCLAW_MEMORY_INDEX_DIRS"`
+	Enabled        bool     `json:"enabled"           env:"PICOCLAW_MEMORY_ENABLED"`
+	QdrantURL      string   `json:"qdrant_url"        env:"PICOCLAW_MEMORY_QDRANT_URL"`
+	EmbeddingURL   string   `json:"embedding_url"     env:"PICOCLAW_MEMORY_EMBEDDING_URL"`
+	EmbeddingModel string   `json:"embedding_model"   env:"PICOCLAW_MEMORY_EMBEDDING_MODEL"`
+	CollectionName string   `json:"collection_name"   env:"PICOCLAW_MEMORY_COLLECTION_NAME"`
+	AutoInjectTopK int      `json:"auto_inject_top_k" env:"PICOCLAW_MEMORY_AUTO_INJECT_TOP_K"`
+	DecayRate      float64  `json:"decay_rate"        env:"PICOCLAW_MEMORY_DECAY_RATE"`
+	MaxChunkTokens int      `json:"max_chunk_tokens"  env:"PICOCLAW_MEMORY_MAX_CHUNK_TOKENS"`
+	DisplayTokens  int      `json:"display_tokens"    env:"PICOCLAW_MEMORY_DISPLAY_TOKENS"`
+	IndexDirs      []string `json:"index_dirs"        env:"PICOCLAW_MEMORY_INDEX_DIRS"`
 
-	ConsolidationModel        string  `json:"consolidation_model"         env:"PICOCLAW_CONSOLIDATION_MODEL"`
+	ConsolidationModel        string  `json:"consolidation_model"          env:"PICOCLAW_CONSOLIDATION_MODEL"`
 	ConsolidationLMSModelPath string  `json:"consolidation_lms_model_path" env:"PICOCLAW_CONSOLIDATION_LMS_MODEL"`
-	SimilarityThreshold       float64 `json:"similarity_threshold"        env:"PICOCLAW_SIMILARITY_THRESHOLD"`
-	PruneScoreThreshold       float64 `json:"prune_score_threshold"       env:"PICOCLAW_PRUNE_SCORE_THRESHOLD"`
-	PruneMinAgeDays           int     `json:"prune_min_age_days"          env:"PICOCLAW_PRUNE_MIN_AGE_DAYS"`
-	ArchivePath               string  `json:"archive_path"                env:"PICOCLAW_ARCHIVE_PATH"`
+	SimilarityThreshold       float64 `json:"similarity_threshold"         env:"PICOCLAW_SIMILARITY_THRESHOLD"`
+	PruneScoreThreshold       float64 `json:"prune_score_threshold"        env:"PICOCLAW_PRUNE_SCORE_THRESHOLD"`
+	PruneMinAgeDays           int     `json:"prune_min_age_days"           env:"PICOCLAW_PRUNE_MIN_AGE_DAYS"`
+	ArchivePath               string  `json:"archive_path"                 env:"PICOCLAW_ARCHIVE_PATH"`
 
 	// NudgeInterval: every N user turns without a memory tool call, the agent
 	// gets a reminder to save durable facts. 0 = default (10), negative = off.
@@ -594,24 +594,24 @@ func (m MemoryConfig) GetNudgeInterval() int {
 
 // LearningConfig holds configuration for the learning system.
 type LearningConfig struct {
-	Enabled                bool    `json:"enabled"                        env:"PICOCLAW_LEARNING_ENABLED"`
+	Enabled                bool    `json:"enabled"                          env:"PICOCLAW_LEARNING_ENABLED"`
 	CrossSessionClustering bool    `json:"cross_session_clustering_enabled" env:"PICOCLAW_LEARNING_CROSS_SESSION_CLUSTERING_ENABLED"`
-	QdrantURL              string  `json:"qdrant_url"                     env:"PICOCLAW_LEARNING_QDRANT_URL"`
-	CollectionName         string  `json:"collection_name"                env:"PICOCLAW_LEARNING_COLLECTION_NAME"`
-	EmbeddingURL           string  `json:"embedding_url"                  env:"PICOCLAW_LEARNING_EMBEDDING_URL"`
-	EmbeddingModel         string  `json:"embedding_model"                env:"PICOCLAW_LEARNING_EMBEDDING_MODEL"`
-	MaxRetrievedLessons    int     `json:"max_retrieved_lessons"          env:"PICOCLAW_LEARNING_MAX_RETRIEVED_LESSONS"`
-	MinConfidenceThreshold float64 `json:"min_confidence_threshold"       env:"PICOCLAW_LEARNING_MIN_CONFIDENCE_THRESHOLD"`
-	MinUserMessageChars    int     `json:"min_user_message_chars"         env:"PICOCLAW_LEARNING_MIN_USER_MESSAGE_CHARS"`
-	DupSimilarityThreshold float64 `json:"dup_similarity_threshold"       env:"PICOCLAW_LEARNING_DUP_SIMILARITY_THRESHOLD"`
-	DecayRate              float64 `json:"decay_rate"                     env:"PICOCLAW_LEARNING_DECAY_RATE"`
-	CorrectionSessionTTL   int     `json:"correction_session_ttl_minutes" env:"PICOCLAW_LEARNING_CORRECTION_SESSION_TTL_MINUTES"`
-	MaxUserMessageChars    int     `json:"max_user_message_chars"         env:"PICOCLAW_LEARNING_MAX_USER_MESSAGE_CHARS"`
-	MaxFinalResponseChars  int     `json:"max_final_response_chars"       env:"PICOCLAW_LEARNING_MAX_FINAL_RESPONSE_CHARS"`
-	MaxToolArgsChars       int     `json:"max_tool_args_chars"            env:"PICOCLAW_LEARNING_MAX_TOOL_ARGS_CHARS"`
-	MaxToolResultChars     int     `json:"max_tool_result_chars"          env:"PICOCLAW_LEARNING_MAX_TOOL_RESULT_CHARS"`
-	MaxErrorMessageChars   int     `json:"max_error_message_chars"        env:"PICOCLAW_LEARNING_MAX_ERROR_MESSAGE_CHARS"`
-	MaxLessonFieldChars    int     `json:"max_lesson_field_chars"         env:"PICOCLAW_LEARNING_MAX_LESSON_FIELD_CHARS"`
+	QdrantURL              string  `json:"qdrant_url"                       env:"PICOCLAW_LEARNING_QDRANT_URL"`
+	CollectionName         string  `json:"collection_name"                  env:"PICOCLAW_LEARNING_COLLECTION_NAME"`
+	EmbeddingURL           string  `json:"embedding_url"                    env:"PICOCLAW_LEARNING_EMBEDDING_URL"`
+	EmbeddingModel         string  `json:"embedding_model"                  env:"PICOCLAW_LEARNING_EMBEDDING_MODEL"`
+	MaxRetrievedLessons    int     `json:"max_retrieved_lessons"            env:"PICOCLAW_LEARNING_MAX_RETRIEVED_LESSONS"`
+	MinConfidenceThreshold float64 `json:"min_confidence_threshold"         env:"PICOCLAW_LEARNING_MIN_CONFIDENCE_THRESHOLD"`
+	MinUserMessageChars    int     `json:"min_user_message_chars"           env:"PICOCLAW_LEARNING_MIN_USER_MESSAGE_CHARS"`
+	DupSimilarityThreshold float64 `json:"dup_similarity_threshold"         env:"PICOCLAW_LEARNING_DUP_SIMILARITY_THRESHOLD"`
+	DecayRate              float64 `json:"decay_rate"                       env:"PICOCLAW_LEARNING_DECAY_RATE"`
+	CorrectionSessionTTL   int     `json:"correction_session_ttl_minutes"   env:"PICOCLAW_LEARNING_CORRECTION_SESSION_TTL_MINUTES"`
+	MaxUserMessageChars    int     `json:"max_user_message_chars"           env:"PICOCLAW_LEARNING_MAX_USER_MESSAGE_CHARS"`
+	MaxFinalResponseChars  int     `json:"max_final_response_chars"         env:"PICOCLAW_LEARNING_MAX_FINAL_RESPONSE_CHARS"`
+	MaxToolArgsChars       int     `json:"max_tool_args_chars"              env:"PICOCLAW_LEARNING_MAX_TOOL_ARGS_CHARS"`
+	MaxToolResultChars     int     `json:"max_tool_result_chars"            env:"PICOCLAW_LEARNING_MAX_TOOL_RESULT_CHARS"`
+	MaxErrorMessageChars   int     `json:"max_error_message_chars"          env:"PICOCLAW_LEARNING_MAX_ERROR_MESSAGE_CHARS"`
+	MaxLessonFieldChars    int     `json:"max_lesson_field_chars"           env:"PICOCLAW_LEARNING_MAX_LESSON_FIELD_CHARS"`
 }
 
 func (l LearningConfig) GetQdrantURL() string {

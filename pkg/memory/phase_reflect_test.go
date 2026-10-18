@@ -13,7 +13,9 @@ func TestPhaseReflect_GeneratesInsights(t *testing.T) {
 		{ID: "p1", Payload: QdrantPayload{Text: "PicoClaw daemon mode works", Importance: 9}},
 		{ID: "p2", Payload: QdrantPayload{Text: "MEV bot uses Jito", Importance: 8}},
 	})
-	llm := &mockLLM{response: "- Pattern: Both projects rely on long-running daemon processes.\n- Insight: External service dependencies are the main failure mode."}
+	llm := &mockLLM{
+		response: "- Pattern: Both projects rely on long-running daemon processes.\n- Insight: External service dependencies are the main failure mode.",
+	}
 	embedder := &mockEmbedder{vector: []float64{0.5, 0.5}}
 	reflectDir := t.TempDir()
 

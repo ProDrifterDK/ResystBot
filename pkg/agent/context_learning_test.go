@@ -6,10 +6,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/learning"
 	"github.com/sipeed/picoclaw/pkg/skills"
-	"github.com/stretchr/testify/require"
 )
 
 type fakeLearningRetriever struct {
@@ -77,7 +78,11 @@ func TestContextBuilderBuildMessagesInjectsLearningBeforeMemory(t *testing.T) {
 	require.Contains(t, prompt, "## Past Learnings (use these to avoid repeating mistakes)")
 	require.Contains(t, prompt, "Lesson ID: lesson_123")
 	require.Contains(t, prompt, "Swallow retrieval errors and continue with the existing prompt")
-	require.Less(t, strings.Index(prompt, "## Past Learnings (use these to avoid repeating mistakes)"), strings.Index(prompt, "# Memory\n\n"))
+	require.Less(
+		t,
+		strings.Index(prompt, "## Past Learnings (use these to avoid repeating mistakes)"),
+		strings.Index(prompt, "# Memory\n\n"),
+	)
 
 	injected := cb.GetInjectedLessons()
 	require.Len(t, injected, 1)
@@ -96,7 +101,10 @@ func TestContextBuilderBuildMessagesLearningFailureIsSilent(t *testing.T) {
 		skillsLoader: skills.NewSkillsLoader(base.workspace, "", ""),
 		memory:       NewMemoryStore(base.workspace),
 	}
-	cb.SetLearningRetriever(&fakeLearningRetriever{err: errors.New("embed failed")}, &config.LearningConfig{Enabled: true})
+	cb.SetLearningRetriever(
+		&fakeLearningRetriever{err: errors.New("embed failed")},
+		&config.LearningConfig{Enabled: true},
+	)
 
 	messages := cb.BuildMessages(context.Background(), nil, "", "fix qdrant timeout bug", nil, "", "")
 	require.Len(t, messages, 2)
@@ -108,7 +116,10 @@ func TestContextBuilderBuildMessagesLearningFailureIsSilent(t *testing.T) {
 func TestContextBuilderBuildMessagesSkipsLearningWhenDisabledOrConfigNil(t *testing.T) {
 	t.Run("disabled config", func(t *testing.T) {
 		cb := newLearningTestContextBuilder(t)
-		cb.SetLearningRetriever(&fakeLearningRetriever{lessons: []learning.LessonRecord{{ID: "lesson_disabled"}}}, &config.LearningConfig{Enabled: false})
+		cb.SetLearningRetriever(
+			&fakeLearningRetriever{lessons: []learning.LessonRecord{{ID: "lesson_disabled"}}},
+			&config.LearningConfig{Enabled: false},
+		)
 
 		messages := cb.BuildMessages(context.Background(), nil, "", "fix qdrant timeout bug", nil, "", "")
 		require.NotContains(t, messages[0].Content, "## Past Learnings (use these to avoid repeating mistakes)")
@@ -147,14 +158,23 @@ func TestContextBuilderInjectedLessonsClearedBetweenBuilds(t *testing.T) {
 func TestContextBuilderBuildMessagesInjectsCurrentInterlocutor(t *testing.T) {
 	cb := newLearningTestContextBuilder(t)
 
-	messages := cb.BuildMessages(context.Background(), nil, "Previous summary mentions Alan", "hola", nil, "telegram", "101293943", UserIdentity{
-		SenderID:    "101293943|xaskasdf",
-		UserID:      "101293943",
-		Username:    "xaskasdf",
-		DisplayName: "Samuel",
-		Role:        "guest",
-		IsGuest:     true,
-	})
+	messages := cb.BuildMessages(
+		context.Background(),
+		nil,
+		"Previous summary mentions Alan",
+		"hola",
+		nil,
+		"telegram",
+		"101293943",
+		UserIdentity{
+			SenderID:    "101293943|xaskasdf",
+			UserID:      "101293943",
+			Username:    "xaskasdf",
+			DisplayName: "Samuel",
+			Role:        "guest",
+			IsGuest:     true,
+		},
+	)
 
 	require.Len(t, messages, 2)
 	prompt := messages[0].Content
@@ -165,5 +185,9 @@ func TestContextBuilderBuildMessagesInjectsCurrentInterlocutor(t *testing.T) {
 	require.Contains(t, prompt, "Role/trust level: guest")
 	require.Contains(t, prompt, "Do not call the interlocutor Alan")
 	require.Contains(t, prompt, "Guest safety: this is not Alan/ProDrifterDK")
-	require.Greater(t, strings.Index(prompt, "## Current Interlocutor"), strings.Index(prompt, "## Summary of Previous Conversation"))
+	require.Greater(
+		t,
+		strings.Index(prompt, "## Current Interlocutor"),
+		strings.Index(prompt, "## Summary of Previous Conversation"),
+	)
 }

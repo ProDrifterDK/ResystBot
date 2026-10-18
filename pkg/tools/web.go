@@ -427,7 +427,11 @@ type searxngResponse struct {
 }
 
 func (p *SearXNGSearchProvider) Search(ctx context.Context, query string, count int) (string, error) {
-	searchURL := fmt.Sprintf("%s/search?q=%s&format=json&language=auto", strings.TrimRight(p.baseURL, "/"), url.QueryEscape(query))
+	searchURL := fmt.Sprintf(
+		"%s/search?q=%s&format=json&language=auto",
+		strings.TrimRight(p.baseURL, "/"),
+		url.QueryEscape(query),
+	)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
 	if err != nil {
@@ -506,7 +510,11 @@ func NewWebSearchTool(opts WebSearchToolOptions) *WebSearchTool {
 
 	// Priority: Perplexity > Brave > Tavily > SearXNG > DuckDuckGo
 	if opts.PerplexityEnabled && opts.PerplexityAPIKey != "" {
-		provider = &PerplexitySearchProvider{apiKey: opts.PerplexityAPIKey, model: opts.PerplexityModel, proxy: opts.Proxy}
+		provider = &PerplexitySearchProvider{
+			apiKey: opts.PerplexityAPIKey,
+			model:  opts.PerplexityModel,
+			proxy:  opts.Proxy,
+		}
 		if opts.PerplexityMaxResults > 0 {
 			maxResults = opts.PerplexityMaxResults
 		}

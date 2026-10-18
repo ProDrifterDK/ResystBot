@@ -34,7 +34,12 @@ type ReconsolidationHandler struct {
 }
 
 // NewReconsolidationHandler creates a reconsolidation handler.
-func NewReconsolidationHandler(embedder Embedder, llm LLMCompleter, qdrant VectorStore, logDir string) *ReconsolidationHandler {
+func NewReconsolidationHandler(
+	embedder Embedder,
+	llm LLMCompleter,
+	qdrant VectorStore,
+	logDir string,
+) *ReconsolidationHandler {
 	return &ReconsolidationHandler{
 		embedder: embedder,
 		llm:      llm,
@@ -141,10 +146,18 @@ func (h *ReconsolidationHandler) findCandidates(chunks []MemoryChunk, responseVe
 }
 
 // confirmAndUpdate asks the LLM whether the response updates a memory.
-func (h *ReconsolidationHandler) confirmAndUpdate(ctx context.Context, chunk MemoryChunk, llmResponse string) (string, bool, error) {
+func (h *ReconsolidationHandler) confirmAndUpdate(
+	ctx context.Context,
+	chunk MemoryChunk,
+	llmResponse string,
+) (string, bool, error) {
 	systemPrompt := "You are a memory reconsolidation system. Compare a stored memory with new information from a conversation. If the new information updates, corrects, or extends the memory, respond with ONLY the updated memory text, preserving the original format and approximate length. If the memory is still accurate and complete, respond with \"NO_UPDATE\"."
 
-	userPrompt := fmt.Sprintf("Stored memory: %s\n\nNew information: %s\n\nDoes the new information update this memory?", chunk.Text, llmResponse)
+	userPrompt := fmt.Sprintf(
+		"Stored memory: %s\n\nNew information: %s\n\nDoes the new information update this memory?",
+		chunk.Text,
+		llmResponse,
+	)
 
 	response, err := h.llm.Complete(ctx, systemPrompt, userPrompt)
 	if err != nil {
@@ -195,13 +208,13 @@ func (h *ReconsolidationHandler) replaceChunk(ctx context.Context, chunk MemoryC
 }
 
 func (h *ReconsolidationHandler) appendLog(chunk MemoryChunk, newText string) error {
-	if err := os.MkdirAll(h.logDir, 0755); err != nil {
+	if err := os.MkdirAll(h.logDir, 0o755); err != nil {
 		return err
 	}
 
 	now := time.Now()
 	filename := filepath.Join(h.logDir, now.Format("2006-01")+".md")
-	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}

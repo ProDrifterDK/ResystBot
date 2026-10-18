@@ -26,9 +26,18 @@ func NewHTTPProviderWithMaxTokensField(apiKey, apiBase, proxy, maxTokensField st
 	return NewHTTPProviderWithMaxTokensFieldAndExtraBody(apiKey, apiBase, proxy, maxTokensField, nil)
 }
 
-func NewHTTPProviderWithMaxTokensFieldAndExtraBody(apiKey, apiBase, proxy, maxTokensField string, extraBody map[string]any) *HTTPProvider {
+func NewHTTPProviderWithMaxTokensFieldAndExtraBody(
+	apiKey, apiBase, proxy, maxTokensField string,
+	extraBody map[string]any,
+) *HTTPProvider {
 	return &HTTPProvider{
-		delegate: openai_compat.NewProviderWithMaxTokensFieldAndExtraBody(apiKey, apiBase, proxy, maxTokensField, extraBody),
+		delegate: openai_compat.NewProviderWithMaxTokensFieldAndExtraBody(
+			apiKey,
+			apiBase,
+			proxy,
+			maxTokensField,
+			extraBody,
+		),
 	}
 }
 
