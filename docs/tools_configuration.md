@@ -131,6 +131,37 @@ The skills tool configures skill discovery and installation via registries like 
 }
 ```
 
+## MCP Tools
+
+MCP servers are declared under `tools.mcp.servers.<name>` in `config.json`. Each bridged
+tool is registered as `mcp__<server>__<tool>`.
+
+### Large text results as artifacts
+
+`tools.mcp.max_inline_text_chars` controls how much text from an MCP tool result is kept
+inline in model context. The threshold is counted in Unicode characters (Go runes), not
+bytes — `16384` means up to 16,384 characters, which may occupy more than 16 KB for
+multibyte text such as CJK.
+
+Above this threshold, the text result is saved as a local artifact under
+`<workspace>/.artifacts/mcp/` and the model receives a short note plus the artifact path
+instead of the full payload. If the artifact cannot be written, the oversized text is
+still omitted from context so a single large result cannot blow the context window.
+
+Non-text content (images, audio, resource links) is never inlined as a payload; the model
+sees a short placeholder such as `[non-text content: image (image/png)]`.
+
+```json
+{
+  "tools": {
+    "mcp": {
+      "max_inline_text_chars": 16384,
+      "servers": {}
+    }
+  }
+}
+```
+
 ## Environment Variables
 
 All configuration options can be overridden via environment variables with the format `PICOCLAW_TOOLS_<SECTION>_<KEY>`:
@@ -139,5 +170,6 @@ For example:
 - `PICOCLAW_TOOLS_WEB_BRAVE_ENABLED=true`
 - `PICOCLAW_TOOLS_EXEC_ENABLE_DENY_PATTERNS=false`
 - `PICOCLAW_TOOLS_CRON_EXEC_TIMEOUT_MINUTES=10`
+- `PICOCLAW_TOOLS_MCP_MAX_INLINE_TEXT_CHARS=16384`
 
 Note: Array-type environment variables are not currently supported and must be set via the config file.

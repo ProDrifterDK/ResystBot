@@ -104,7 +104,10 @@ func newAgentInstanceWithMCPManager(
 			if agentCfg != nil {
 				agentMCPServers = agentCfg.MCPServers
 			}
-			count := mcp.RegisterMCPTools(mcpManager, toolsRegistry, agentMCPServers)
+			count := mcp.RegisterMCPTools(mcpManager, toolsRegistry, agentMCPServers, mcp.BridgeOptions{
+				Workspace:          workspace,
+				MaxInlineTextRunes: cfg.Tools.MCP.GetMaxInlineTextChars(),
+			})
 			logger.InfoCF("agent", "Registered MCP tools", map[string]any{
 				"count": count,
 			})

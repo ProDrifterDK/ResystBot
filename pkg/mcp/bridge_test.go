@@ -3,6 +3,8 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -147,7 +149,7 @@ func TestMCPToolBridgeParameters(t *testing.T) {
 
 func TestBridgeToolsEmpty(t *testing.T) {
 	m := &Manager{connections: make(map[string]*ServerConnection)}
-	result := BridgeTools(m, nil)
+	result := BridgeTools(m, nil, BridgeOptions{})
 	if len(result) != 0 {
 		t.Errorf("BridgeTools with empty manager returned %d tools, want 0", len(result))
 	}
@@ -276,4 +278,244 @@ func resolveJSONPointer(root any, ref string) (any, error) {
 		}
 	}
 	return cur, nil
+}
+
+// --- Oversized MCP text -> local artifact (port of upstream d8c5183d) ---
+
+// artifactPathFromLLM extracts the path from a "Local artifact path: [file:...]"
+// note, failing the test when the note is missing or malformed.
+func artifactPathFromLLM(t *testing.T, forLLM string) string {
+	t.Helper()
+	const marker = "[file:"
+	start := strings.Index(forLLM, marker)
+	if start < 0 {
+		t.Fatalf("expected an artifact path in ForLLM, got %q", forLLM)
+	}
+	rest := forLLM[start+len(marker):]
+	end := strings.Index(rest, "]")
+	if end < 0 {
+		t.Fatalf("artifact path tag is not closed in %q", forLLM)
+	}
+	return rest[:end]
+}
+
+func newBridgeForArtifactTest(toolName string) *MCPToolBridge {
+	return NewMCPToolBridge("test_server", mcpgo.Tool{Name: toolName}, nil, 0)
+}
+
+func TestMCPToolBridgeOversizedTextStoredAsArtifact(t *testing.T) {
+	workspace := t.TempDir()
+	largeText := strings.Repeat("This is a large MCP text payload.\n", 800)
+
+	b := newBridgeForArtifactTest("dump_payload")
+	b.SetWorkspace(workspace)
+
+	res := b.convertMCPResult(mcpgo.NewToolResultText(largeText))
+
+	if strings.Contains(res.ForLLM, "This is a large MCP text payload") {
+		t.Fatalf("expected large MCP text to be omitted from ForLLM, got %q", res.ForLLM)
+	}
+	if !strings.Contains(res.ForLLM, "saved as a local artifact") {
+		t.Fatalf("expected artifact note, got %q", res.ForLLM)
+	}
+	if res.IsError {
+		t.Fatalf("expected a non-error result")
+	}
+
+	path := artifactPathFromLLM(t, res.ForLLM)
+	if !strings.HasPrefix(path, workspace) {
+		t.Fatalf("expected artifact inside workspace %q, got %q", workspace, path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("expected artifact file to be readable: %v", err)
+	}
+	if string(data) != strings.TrimSpace(largeText) {
+		t.Fatalf("expected artifact to preserve the raw MCP payload")
+	}
+}
+
+func TestMCPToolBridgeTextWithinLimitStaysInline(t *testing.T) {
+	workspace := t.TempDir()
+	smallText := "short payload that fits inline"
+
+	b := newBridgeForArtifactTest("small_tool")
+	b.SetWorkspace(workspace)
+
+	res := b.convertMCPResult(mcpgo.NewToolResultText(smallText))
+
+	if res.ForLLM != smallText {
+		t.Fatalf("expected inline text %q, got %q", smallText, res.ForLLM)
+	}
+	if strings.Contains(res.ForLLM, "[file:") {
+		t.Fatalf("expected no artifact for inline-sized text, got %q", res.ForLLM)
+	}
+}
+
+func TestMCPToolBridgeCustomInlineLimitPersistsArtifact(t *testing.T) {
+	workspace := t.TempDir()
+	text := strings.Repeat("small custom threshold text\n", 20)
+
+	b := newBridgeForArtifactTest("custom_tool")
+	b.SetWorkspace(workspace)
+	b.SetMaxInlineTextRunes(32)
+
+	res := b.convertMCPResult(mcpgo.NewToolResultText(text))
+
+	if !strings.Contains(res.ForLLM, "saved as a local artifact") {
+		t.Fatalf("expected custom threshold to persist an artifact, got %q", res.ForLLM)
+	}
+	if strings.Contains(res.ForLLM, "small custom threshold text") {
+		t.Fatalf("expected text to be omitted from ForLLM, got %q", res.ForLLM)
+	}
+	path := artifactPathFromLLM(t, res.ForLLM)
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected artifact file to exist: %v", err)
+	}
+}
+
+func TestMCPToolBridgeArtifactFailureStillOmitsContext(t *testing.T) {
+	// A workspace that is a regular file (not a directory) forces MkdirAll to fail.
+	workspaceRoot := t.TempDir()
+	workspaceFile := filepath.Join(workspaceRoot, "not-a-directory")
+	if err := os.WriteFile(workspaceFile, []byte("x"), 0o600); err != nil {
+		t.Fatalf("failed to create workspace file: %v", err)
+	}
+
+	largeText := strings.Repeat("This is a large MCP text payload.\n", 800)
+
+	b := newBridgeForArtifactTest("dump_payload")
+	b.SetWorkspace(workspaceFile)
+
+	res := b.convertMCPResult(mcpgo.NewToolResultText(largeText))
+
+	if strings.Contains(res.ForLLM, "This is a large MCP text payload") {
+		t.Fatalf("expected large MCP text to be omitted from ForLLM, got %q", res.ForLLM)
+	}
+	if !strings.Contains(res.ForLLM, "artifact persistence failed") {
+		t.Fatalf("expected persistence failure note, got %q", res.ForLLM)
+	}
+	if strings.Contains(res.ForLLM, "[file:") {
+		t.Fatalf("expected no artifact path on persistence failure, got %q", res.ForLLM)
+	}
+}
+
+func TestMCPToolBridgeWhitespaceWorkspaceDisablesArtifact(t *testing.T) {
+	largeText := strings.Repeat("This is a large MCP text payload.\n", 800)
+
+	b := newBridgeForArtifactTest("dump_payload")
+	b.SetWorkspace(" \n\t ")
+
+	res := b.convertMCPResult(mcpgo.NewToolResultText(largeText))
+
+	if strings.Contains(res.ForLLM, "[file:") {
+		t.Fatalf("expected no artifact for blank workspace, got %q", res.ForLLM)
+	}
+	if !strings.Contains(res.ForLLM, "This is a large MCP text payload") {
+		t.Fatalf("expected large text to stay inline when workspace is blank, got %q", res.ForLLM)
+	}
+}
+
+func TestMCPToolBridgeOversizedErrorResultKeepsErrorFlag(t *testing.T) {
+	workspace := t.TempDir()
+	largeText := strings.Repeat("boom\n", 4000)
+
+	b := newBridgeForArtifactTest("failing_tool")
+	b.SetWorkspace(workspace)
+
+	res := b.convertMCPResult(mcpgo.NewToolResultError(largeText))
+
+	if !res.IsError {
+		t.Fatalf("expected oversized error result to keep IsError=true")
+	}
+	if !strings.Contains(res.ForLLM, "saved as a local artifact") {
+		t.Fatalf("expected artifact note, got %q", res.ForLLM)
+	}
+	if strings.Contains(res.ForLLM, "boom") {
+		t.Fatalf("expected oversized error text to be omitted from context")
+	}
+}
+
+func TestMCPToolBridgeArtifactIgnoresNonTextOnlyResults(t *testing.T) {
+	workspace := t.TempDir()
+
+	b := newBridgeForArtifactTest("image_tool")
+	b.SetWorkspace(workspace)
+
+	res := b.convertMCPResult(&mcpgo.CallToolResult{
+		Content: []mcpgo.Content{mcpgo.NewImageContent(strings.Repeat("A", 64), "image/png")},
+	})
+
+	if strings.Contains(res.ForLLM, "[file:") {
+		t.Fatalf("expected no artifact for non-text content, got %q", res.ForLLM)
+	}
+	if !strings.Contains(res.ForLLM, "non-text content") {
+		t.Fatalf("expected non-text placeholder, got %q", res.ForLLM)
+	}
+	if strings.Contains(res.ForLLM, "AAAA") {
+		t.Fatalf("expected image payload to be omitted from context, got %q", res.ForLLM)
+	}
+}
+
+func TestSanitizeArtifactComponent(t *testing.T) {
+	tests := map[string]string{
+		"":              "unnamed",
+		"  ":            "unnamed",
+		"plain":         "plain",
+		"with-dash_ok1": "with-dash_ok1",
+		"a/b\\c:d":      "a_b_c_d",
+		"playwright":    "playwright",
+	}
+	for in, want := range tests {
+		if got := sanitizeArtifactComponent(in); got != want {
+			t.Errorf("sanitizeArtifactComponent(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestMCPToolBridgeEmbeddedResourceTextIsSurfaced(t *testing.T) {
+	b := newBridgeForArtifactTest("resource_tool")
+
+	res := b.convertMCPResult(&mcpgo.CallToolResult{
+		Content: []mcpgo.Content{
+			mcpgo.EmbeddedResource{
+				Type: "resource",
+				Resource: mcpgo.TextResourceContents{
+					URI:      "file:///notes.md",
+					MIMEType: "text/markdown",
+					Text:     "hello from an embedded resource",
+				},
+			},
+		},
+	})
+
+	if !strings.Contains(res.ForLLM, "hello from an embedded resource") {
+		t.Fatalf("expected embedded resource text to be surfaced, got %q", res.ForLLM)
+	}
+	if strings.Contains(res.ForLLM, "{") {
+		t.Fatalf("expected no struct dump for embedded resource, got %q", res.ForLLM)
+	}
+}
+
+func TestMCPToolBridgeMixedContentBoundsImagePayload(t *testing.T) {
+	workspace := t.TempDir()
+	b := newBridgeForArtifactTest("mixed_tool")
+	b.SetWorkspace(workspace)
+
+	res := b.convertMCPResult(&mcpgo.CallToolResult{
+		Content: []mcpgo.Content{
+			mcpgo.NewTextContent("caption text"),
+			mcpgo.NewImageContent(strings.Repeat("B", 512), "image/jpeg"),
+		},
+	})
+
+	if !strings.Contains(res.ForLLM, "caption text") {
+		t.Fatalf("expected text part to survive, got %q", res.ForLLM)
+	}
+	if !strings.Contains(res.ForLLM, "image (image/jpeg)") {
+		t.Fatalf("expected bounded image placeholder, got %q", res.ForLLM)
+	}
+	if strings.Contains(res.ForLLM, "BBBB") {
+		t.Fatalf("expected image payload to be omitted from context, got %q", res.ForLLM)
+	}
 }

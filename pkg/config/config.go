@@ -829,9 +829,27 @@ type ToolsConfig struct {
 	ClaudeCode ClaudeCodeConfig  `json:"claude_code,omitempty"`
 }
 
+// DefaultMCPMaxInlineTextChars is the default limit, counted in Unicode
+// characters (Go runes), on how much MCP text result is kept inline in model
+// context. Larger results are persisted as local artifacts instead.
+const DefaultMCPMaxInlineTextChars = 16 * 1024
+
 // MCPConfig holds configuration for MCP (Model Context Protocol) servers.
 type MCPConfig struct {
+	// MaxInlineTextChars controls how much MCP text stays inline in model
+	// context before it is saved as a local artifact. Counted in runes.
+	MaxInlineTextChars int `json:"max_inline_text_chars,omitempty" env:"PICOCLAW_TOOLS_MCP_MAX_INLINE_TEXT_CHARS"`
+	// Servers is a map of server name to server configuration.
 	Servers map[string]MCPServerConfig `json:"servers,omitempty"`
+}
+
+// GetMaxInlineTextChars returns the configured inline text limit, falling back
+// to DefaultMCPMaxInlineTextChars when unset or non-positive.
+func (c *MCPConfig) GetMaxInlineTextChars() int {
+	if c != nil && c.MaxInlineTextChars > 0 {
+		return c.MaxInlineTextChars
+	}
+	return DefaultMCPMaxInlineTextChars
 }
 
 // MCPServerConfig configures a single MCP server connection.

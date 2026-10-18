@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -122,5 +124,62 @@ func TestMCPServerConfigIsEnabled_ExplicitFalse(t *testing.T) {
 	}
 	if cfg.IsEnabled() {
 		t.Error("expected IsEnabled() = false when Enabled = false")
+	}
+}
+
+func TestMCPConfigGetMaxInlineTextChars_Default(t *testing.T) {
+	var cfg MCPConfig
+	if got := cfg.GetMaxInlineTextChars(); got != DefaultMCPMaxInlineTextChars {
+		t.Errorf("GetMaxInlineTextChars() = %d, want %d", got, DefaultMCPMaxInlineTextChars)
+	}
+}
+
+func TestMCPConfigGetMaxInlineTextChars_Override(t *testing.T) {
+	cfg := MCPConfig{MaxInlineTextChars: 4096}
+	if got := cfg.GetMaxInlineTextChars(); got != 4096 {
+		t.Errorf("GetMaxInlineTextChars() = %d, want 4096", got)
+	}
+}
+
+func TestMCPConfigGetMaxInlineTextChars_NonPositiveFallsBack(t *testing.T) {
+	for _, limit := range []int{0, -1} {
+		cfg := MCPConfig{MaxInlineTextChars: limit}
+		if got := cfg.GetMaxInlineTextChars(); got != DefaultMCPMaxInlineTextChars {
+			t.Errorf("GetMaxInlineTextChars() with limit %d = %d, want %d",
+				limit, got, DefaultMCPMaxInlineTextChars)
+		}
+	}
+}
+
+func TestMCPConfigGetMaxInlineTextChars_NilReceiver(t *testing.T) {
+	var cfg *MCPConfig
+	if got := cfg.GetMaxInlineTextChars(); got != DefaultMCPMaxInlineTextChars {
+		t.Errorf("nil receiver GetMaxInlineTextChars() = %d, want %d", got, DefaultMCPMaxInlineTextChars)
+	}
+}
+
+func TestDefaultConfig_MCPMaxInlineTextChars(t *testing.T) {
+	cfg := DefaultConfig()
+	if got := cfg.Tools.MCP.GetMaxInlineTextChars(); got != DefaultMCPMaxInlineTextChars {
+		t.Errorf("DefaultConfig MCP limit = %d, want %d", got, DefaultMCPMaxInlineTextChars)
+	}
+}
+
+func TestMCPMaxInlineTextChars_EnvOverride(t *testing.T) {
+	t.Setenv("PICOCLAW_TOOLS_MCP_MAX_INLINE_TEXT_CHARS", "2048")
+
+	// LoadConfig returns early (skipping env.Parse) when the file is missing,
+	// so the override is only observable with a real config file present.
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if got := cfg.Tools.MCP.GetMaxInlineTextChars(); got != 2048 {
+		t.Errorf("env override not applied: got %d, want 2048", got)
 	}
 }

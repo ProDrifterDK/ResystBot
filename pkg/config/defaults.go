@@ -350,6 +350,10 @@ func DefaultConfig() *Config {
 					TTLSeconds: 300,
 				},
 			},
+			MCP: MCPConfig{
+				MaxInlineTextChars: DefaultMCPMaxInlineTextChars,
+				Servers:            map[string]MCPServerConfig{},
+			},
 		},
 		Learning: DefaultLearningConfig(),
 		Heartbeat: HeartbeatConfig{
